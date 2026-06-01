@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | Español | <a href="claude-code-workflow-openworkflow.pt.md">Português</a> | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
+  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | Español | <a href="claude-code-workflow-openworkflow.pt-BR.md">Português</a> | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.ko.md">한국어</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
 </div>
 
 # Claude Code tiene Workflows. ¿Y los demás modelos? Probé OpenWorkflows
@@ -16,9 +16,9 @@ Así que probé OpenWorkflows. Convierte los workflows al estilo de Claude Code 
 
 Este tutorial no comienza con conceptos abstractos. Recorre las capturas de pantalla en orden. El ejemplo es concreto: hacer que OpenWorkflows admita múltiples temas de apariencia, que Pencil sea el predeterminado y que se puedan cambiar en Configuración / Apariencia.
 
-> Esta es la versión en inglés del tutorial de uso basado en capturas de pantalla.
+> Esta es la versión en español del tutorial de uso basado en capturas de pantalla.
 >
-> Versión en chino: [Tutorial de uso de OpenWorkflows](claude-code-workflow-openworkflow.md)
+> Versión en inglés: [OpenWorkflows usage tutorial](claude-code-workflow-openworkflow.en.md)
 
 ## 0. Comienza con la interfaz final
 
@@ -55,18 +55,18 @@ Para la aplicación de escritorio, usa:
 npm run desktop
 ```
 
-## 2. Configura los modelos primero
+## 2. Confirma la configuración general y el punto de ejecución
 
 <p align="center">
-  <img src="images/2-配置大模型.png" alt="Página de configuración de modelos de OpenWorkflows" width="640">
+  <img src="images/2-通用设置.png" alt="Página de configuración general de OpenWorkflows" width="640">
 </p>
-<p align="center"><em>Figura 2: Configura proveedores, CLI local y el modelo predeterminado en Configuración / Modelos.</em></p>
+<p align="center"><em>Figura 2: Configura idioma, CLI local y shell de inicio en Configuración / General; elige el modelo / canal de ejecución activo en la parte inferior de Entrada de IA.</em></p>
 
-Antes de dibujar nada, abre **Configuración / Modelos**. Aquí es donde configuras proveedores, CLIs locales, el modelo predeterminado y los canales de ejecución.
+Antes de dibujar nada, abre **Configuración / General**. Aquí configuras el idioma de la interfaz, la traducción automática de prompts, la CLI local y el shell de inicio.
 
-Cada proveedor muestra su estado, como predeterminado, directo, ejecución mediante CLI o no disponible. La captura de pantalla también muestra que la clave se almacena localmente.
+La antigua pestaña **Modelos** se eliminó. El modelo o canal activo ya no se configura en Ajustes; para la solicitud actual, elígelo en el menú de runtime que está en la parte inferior de Entrada de IA.
 
-Si ya usas `cc-switch` para gestionar configuraciones de modelos, puedes importar esos datos aquí. En la parte inferior del área de entrada de IA, también puedes elegir qué modelo o canal debe usar esta solicitud.
+Si un nodo concreto necesita otro modelo, selecciónalo y sobrescribe el modelo en las propiedades del nodo. Si queda vacío, el nodo hereda la selección del workflow o la selección global.
 
 ## 3. Crea un nuevo workflow e introduce una solicitud
 
@@ -75,7 +75,7 @@ Si ya usas `cc-switch` para gestionar configuraciones de modelos, puedes importa
 </p>
 <p align="center"><em>Figura 3: Haz clic en Nuevo Workflow, luego describe el workflow en la entrada de IA de la esquina inferior derecha.</em></p>
 
-Después de configurar el modelo, haz clic en **Nuevo Workflow** a la izquierda. El lienzo comienza con una estructura mínima: Inicio, un Agente y Fin.
+Después de confirmar la configuración general y el punto de ejecución, haz clic en **Nuevo Workflow** a la izquierda. El lienzo comienza con una estructura mínima: Inicio, un Agente y Fin.
 
 El verdadero punto de partida no es dibujar nodos manualmente. Es la entrada de IA en la esquina inferior derecha. En este ejemplo, escribí:
 
@@ -164,7 +164,7 @@ Una vez que eliges, la IA escribe esa decisión de vuelta en el blueprint del wo
 </p>
 <p align="center"><em>Figura 7: Después de que el blueprint esté listo, haz clic en Run en la barra superior.</em></p>
 
-Después de confirmar la estructura, la configuración de modelos y los límites clave, haz clic en **Run**.
+Después de confirmar la estructura, la selección de runtime y los límites clave, haz clic en **Run**.
 
 Es mejor no ejecutar el workflow en el momento en que se genera. Primero comprueba si las ramas paralelas tienen sentido, si el nodo de resumen viene después de las ramas, y si la validación cubre el resultado final.
 

@@ -1,7 +1,7 @@
 # OpenWorkflows
 
 <div align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | हिन्दी | <a href="README.ar.md">العربية</a>
+  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | हिन्दी | <a href="README.ar.md">العربية</a>
 </div>
 
 Claude Code ने मल्टी-एजेंट चरणों, समानांतर शाखाओं और पाइपलाइनों को निष्पादन-योग्य स्क्रिप्ट के रूप में व्यवस्थित करने के लिए एक Workflow सुविधा पेश की। OpenWorkflows इसी पैटर्न को एक विज़ुअल, मल्टी-मॉडल एडिटर में बदल देता है: एक Workflow ग्राफ़ बनाएं, फिर उसे Claude Code, Codex, Gemini, और भविष्य के लोकल या क्लाउड मॉडल रनटाइम पर चलाएं या अनुकूलित करें।
@@ -14,7 +14,7 @@ Claude Code ने मल्टी-एजेंट चरणों, समान
 
 ## उपयोग ट्यूटोरियल
 
-- [OpenWorkflows उपयोग ट्यूटोरियल](claude-code-workflow-openworkflow.en.md) - सेटअप से लेकर रनटाइम स्विचिंग तक स्क्रीनशॉट के साथ चरण-दर-चरण मार्गदर्शिका।
+- [OpenWorkflows उपयोग ट्यूटोरियल](claude-code-workflow-openworkflow.hi.md) - सामान्य सेटिंग्स और AI इनपुट में runtime selection से लेकर blueprint generation, running और appearance switching तक स्क्रीनशॉट के साथ चरण-दर-चरण मार्गदर्शिका।
 
 ## मल्टी-मॉडल Workflow समर्थन
 
@@ -85,8 +85,8 @@ build.bat              Build the Windows installer
 
 ## और दस्तावेज़
 
-- [चीनी README](README.zh-CN.md)
-- [चीनी उपयोग ट्यूटोरियल](claude-code-workflow-openworkflow.md)
+- [अंग्रेज़ी README](../../README.md)
+- [अंग्रेज़ी उपयोग ट्यूटोरियल](claude-code-workflow-openworkflow.en.md)
 
 ## सत्यापन
 

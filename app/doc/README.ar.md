@@ -1,7 +1,7 @@
 # OpenWorkflows
 
 <div align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.hi.md">हिन्दी</a> | العربية
+  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | العربية
 </div>
 
 مَكَّن Claude Code ميزة Workflow لتنسيق خطوات الوكلاء المتعددة، والفروع المتوازية، وخطوط المعالجة باعتبارها نصوصًا قابلة للتنفيذ. يحوّل OpenWorkflows هذا النمط إلى محرّر بصري متعدد النماذج: تبني رسمًا بيانيًا واحدًا لسير العمل، ثم تشغّله أو تُكيّفه عبر Claude Code وCodex وGemini وأنظمة تشغيل النماذج المحلية أو السحابية المستقبلية.
@@ -14,7 +14,7 @@
 
 ## دليل الاستخدام
 
-- [دليل استخدام OpenWorkflows](claude-code-workflow-openworkflow.en.md) - شرح تفصيلي خطوة بخطوة مع لقطات الشاشة من الإعداد حتى التبديل بين أنظمة التشغيل.
+- [دليل استخدام OpenWorkflows](claude-code-workflow-openworkflow.ar.md) - شرح تفصيلي بالصور من الإعدادات العامة واختيار runtime في إدخال AI إلى إنشاء المخطط والتشغيل وتبديل المظهر.
 
 ## دعم سير العمل متعدد النماذج
 
@@ -85,8 +85,8 @@ build.bat              Build the Windows installer
 
 ## مزيد من الوثائق
 
-- [README بالصينية](README.zh-CN.md)
-- [دليل الاستخدام بالصينية](claude-code-workflow-openworkflow.md)
+- [README بالإنجليزية](../../README.md)
+- [دليل الاستخدام بالإنجليزية](claude-code-workflow-openworkflow.en.md)
 
 ## التحقق
 

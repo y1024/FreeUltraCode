@@ -1,7 +1,3 @@
-<div align="center">
-  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | Português | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
-</div>
-
 # O Claude Code Tem Workflows. E os Outros Modelos? Eu Experimentei o OpenWorkflows
 
 Recentemente, tenho observado de perto os workflows do Claude Code.
@@ -16,9 +12,9 @@ Então, experimentei o OpenWorkflows. Ele transforma workflows no estilo do Clau
 
 Este tutorial não começa com conceitos abstratos. Ele percorre as capturas de tela em ordem. O exemplo é concreto: fazer o OpenWorkflows suportar múltiplos temas de aparência, definir o Pencil como padrão e permitir a troca em Configurações / Aparência.
 
-> Esta é a versão em inglês do tutorial de uso baseado em capturas de tela.
+> Esta é a versão em português do tutorial de uso baseado em capturas de tela.
 >
-> Versão em chinês: [Tutorial de uso do OpenWorkflows](claude-code-workflow-openworkflow.md)
+> Versão em inglês: [OpenWorkflows usage tutorial](claude-code-workflow-openworkflow.en.md)
 
 ## 0. Comece pela interface final
 
@@ -55,18 +51,18 @@ Para o aplicativo desktop, use:
 npm run desktop
 ```
 
-## 2. Configure os modelos primeiro
+## 2. Confirme as configurações gerais e o ponto de execução
 
 <p align="center">
-  <img src="images/2-配置大模型.png" alt="Página de configuração de modelos do OpenWorkflows" width="640">
+  <img src="images/2-通用设置.png" alt="Página de configurações gerais do OpenWorkflows" width="640">
 </p>
-<p align="center"><em>Figura 2: Configure provedores, CLI local e o modelo padrão em Configurações / Modelos.</em></p>
+<p align="center"><em>Figura 2: Configure idioma, CLI local e shell de lançamento em Configurações / Geral; escolha o modelo / canal de execução ativo na parte inferior da Entrada da IA.</em></p>
 
-Antes de desenhar qualquer coisa, abra **Configurações / Modelos**. É aqui que você configura provedores, CLIs locais, o modelo padrão e canais de runtime.
+Antes de desenhar qualquer coisa, abra **Configurações / Geral**. É aqui que você configura o idioma da interface, a tradução automática de prompts, a CLI local e o shell de lançamento.
 
-Cada provedor mostra seu status, como padrão, direto, runtime CLI ou indisponível. A captura de tela também mostra que a chave é armazenada localmente.
+A antiga aba **Modelos** foi removida. O modelo ou canal ativo não é mais configurado nas Configurações; para a solicitação atual, escolha-o no menu de runtime na parte inferior da Entrada da IA.
 
-Se você já usa o `cc-switch` para gerenciar configurações de modelos, pode importar esses dados aqui. Na parte inferior da área de entrada de IA, você também pode escolher qual modelo ou canal esta solicitação deve usar.
+Se um nó específico precisar de outro modelo, selecione o nó e sobrescreva o modelo nas propriedades dele. Se o campo ficar vazio, o nó herda a seleção do workflow ou a seleção global.
 
 ## 3. Crie um novo workflow e insira uma solicitação
 
@@ -75,7 +71,7 @@ Se você já usa o `cc-switch` para gerenciar configurações de modelos, pode i
 </p>
 <p align="center"><em>Figura 3: Clique em Novo Workflow e, em seguida, descreva o workflow na entrada de IA no canto inferior direito.</em></p>
 
-Depois que o modelo estiver configurado, clique em **Novo Workflow** à esquerda. O canvas começa com uma estrutura mínima: Início, um Agente e Fim.
+Depois de confirmar as configurações gerais e o ponto de execução, clique em **Novo Workflow** à esquerda. O canvas começa com uma estrutura mínima: Início, um Agente e Fim.
 
 O verdadeiro ponto de partida não é o desenho manual de nós. É a entrada de IA no canto inferior direito. Neste exemplo, digitei:
 
@@ -99,7 +95,7 @@ Assim que a solicitação é enviada, o OpenWorkflows reescreve a etapa atual em
 O blueprint na captura de tela torna-se aproximadamente:
 
 ```text
-Início
+Start
   -> Explorar suporte de aparência em paralelo
       -> Pesquisar pontos de entrada atuais
       -> Projetar o sistema de temas
@@ -109,7 +105,7 @@ Início
   -> Conectar a troca em Configurações / Aparência
   -> Validar e revisar
   -> Registrar resultados de entrega
-  -> Fim
+  -> End
 ```
 
 O que importa aqui não é quão bonito o grafo parece. É que um objetivo vago se torna um plano executável.
@@ -164,7 +160,7 @@ Assim que você escolhe, a IA escreve essa decisão de volta no blueprint do wor
 </p>
 <p align="center"><em>Figura 7: Depois que o blueprint estiver pronto, clique em Executar na barra superior.</em></p>
 
-Depois que a estrutura, as configurações de modelo e os limites-chave são confirmados, clique em **Executar**.
+Depois que a estrutura, a seleção de runtime e os limites-chave forem confirmados, clique em **Executar**.
 
 É melhor não executar o workflow no momento em que ele é gerado. Primeiro, verifique se as ramificações paralelas fazem sentido, se o nó de resumo vem depois das ramificações e se a validação cobre o resultado final.
 

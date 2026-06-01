@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | <a href="claude-code-workflow-openworkflow.pt.md">Português</a> | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | 日本語 | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
+  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | <a href="claude-code-workflow-openworkflow.pt-BR.md">Português</a> | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | 日本語 | <a href="claude-code-workflow-openworkflow.ko.md">한국어</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
 </div>
 
 # Claude Code に Workflow があるなら、他のモデルはどうなる？ OpenWorkflows を試してみた
@@ -16,9 +16,9 @@
 
 このチュートリアルは抽象概念から始めない。スクリーンショットを順に見ていく。例は具体的だ。OpenWorkflows に複数の外観テーマをサポートし、デフォルトを Pencil にして、設定 / 外観 で切り替えられるようにする。
 
-> これはスクリーンショットベースの使用チュートリアルの英語版です。
+> これはスクリーンショットベースの使い方チュートリアルの日本語版です。
 >
-> 中国語版: [OpenWorkflows 使用教程](claude-code-workflow-openworkflow.md)
+> 英語版: [OpenWorkflows usage tutorial](claude-code-workflow-openworkflow.en.md)
 
 ## 0. 最終的なインターフェースから始める
 
@@ -55,18 +55,18 @@ npm run dev
 npm run desktop
 ```
 
-## 2. まずモデルを設定する
+## 2. 一般設定と実行入口を確認する
 
 <p align="center">
-  <img src="images/2-配置大模型.png" alt="OpenWorkflows のモデル設定ページ" width="640">
+  <img src="images/2-通用设置.png" alt="OpenWorkflows の一般設定ページ" width="640">
 </p>
-<p align="center"><em>図 2: 設定 / モデル でプロバイダー、ローカル CLI、デフォルトモデルを設定する。</em></p>
+<p align="center"><em>図 2: 設定 / 一般 で言語、ローカル CLI、起動 Shell を設定する。実行モデル / チャンネルは AI 入力欄の下部で選択する。</em></p>
 
-何かを描く前に、**設定 / モデル** を開く。ここでプロバイダー、ローカル CLI、デフォルトモデル、ランタイムチャンネルを設定する。
+何かを描く前に、**設定 / 一般** を開く。ここで UI 言語、プロンプト自動翻訳、ローカル CLI、起動 Shell を設定する。
 
-各プロバイダーには、デフォルト、ダイレクト、CLI ランタイム、利用不可といったステータスが表示される。スクリーンショットではキーがローカルに保存されていることも示されている。
+以前の **モデル** タブは削除された。現在のモデルやチャンネルは設定画面ではなく、AI 入力欄下部のランタイムドロップダウンでリクエストごとに選択する。
 
-すでに `cc-switch` でモデル設定を管理している場合は、ここでそのデータをインポートできる。AI 入力エリアの下部では、このリクエストにどのモデルやチャンネルを使うかも選べる。
+特定のノードだけ別モデルを使う必要がある場合は、そのノードを選択し、ノードプロパティでモデルを上書きする。空のままなら、Workflow またはグローバル選択を継承する。
 
 ## 3. 新しい Workflow を作成し、リクエストを入力する
 
@@ -75,7 +75,7 @@ npm run desktop
 </p>
 <p align="center"><em>図 3: 新規 Workflow をクリックし、右下の AI 入力欄で Workflow を記述する。</em></p>
 
-モデルの設定が済んだら、左側の **新規 Workflow** をクリックする。キャンバスは最小構成で始まる。Start、1 つの Agent、End。
+一般設定と実行入口を確認したら、左側の **新規 Workflow** をクリックする。キャンバスは最小構成で始まる。Start、1 つの Agent、End。
 
 本当の出発点は手動でのノード描画ではない。右下の AI 入力欄だ。この例では、次のように入力した：
 
@@ -164,7 +164,7 @@ Start
 </p>
 <p align="center"><em>図 7: ブループリントの準備ができたら、上部バーの Run をクリックする。</em></p>
 
-構造、モデル設定、主要な境界が確認できたら、**Run** をクリックする。
+構造、ランタイム選択、主要な境界が確認できたら、**Run** をクリックする。
 
 Workflow が生成された瞬間に実行するのは避けた方がいい。まず、並列ブランチが意味をなしているか、サマリーノードがブランチの後にあるか、検証が最終結果をカバーしているかを確認する。
 

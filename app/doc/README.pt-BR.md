@@ -1,7 +1,7 @@
 # OpenWorkflows
 
 <div align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | Português | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
+  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | Português | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
 </div>
 
 Claude Code introduziu um recurso de Workflow para orquestrar etapas multiagente, ramificações paralelas e pipelines como scripts executáveis. O OpenWorkflows transforma esse padrão em um editor visual e multimodelo: construa um grafo de Workflow uma vez e, em seguida, execute-o ou adapte-o no Claude Code, Codex, Gemini e em futuros runtimes de modelos locais ou na nuvem.
@@ -14,7 +14,7 @@ O IR compartilhado mantém a estrutura do workflow portável, ao mesmo tempo em 
 
 ## Tutorial de Uso
 
-- [Tutorial de uso do OpenWorkflows](claude-code-workflow-openworkflow.en.md) - passo a passo com as capturas de tela, da configuração à troca de runtime.
+- [Tutorial de uso do OpenWorkflows](claude-code-workflow-openworkflow.pt-BR.md) - passo a passo com capturas de tela, das configurações gerais e seleção de runtime na Entrada da IA até a geração do blueprint, execução e troca de aparência.
 
 ## Suporte a Workflows Multimodelo
 
@@ -85,8 +85,8 @@ build.bat              Build the Windows installer
 
 ## Mais Documentação
 
-- [README em chinês](README.zh-CN.md)
-- [Tutorial de uso em chinês](claude-code-workflow-openworkflow.md)
+- [README em inglês](../../README.md)
+- [Tutorial de uso em inglês](claude-code-workflow-openworkflow.en.md)
 
 ## Verificação
 

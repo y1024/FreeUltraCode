@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | <a href="claude-code-workflow-openworkflow.pt.md">Português</a> | Русский | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
+  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | <a href="claude-code-workflow-openworkflow.pt-BR.md">Português</a> | Русский | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.ko.md">한국어</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
 </div>
 
 # У Claude Code есть Workflow. А как насчёт других моделей? Я попробовал OpenWorkflows
@@ -16,9 +16,9 @@
 
 Это руководство не начинается с абстрактных концепций. Оно проходит по скриншотам по порядку. Пример конкретный: сделать так, чтобы OpenWorkflows поддерживал несколько тем оформления, использовал Pencil по умолчанию и позволял переключать их в Настройки / Внешний вид.
 
-> Это английская версия руководства по использованию со скриншотами.
+> Это русская версия руководства по использованию со скриншотами.
 >
-> Китайская версия: [Руководство по использованию OpenWorkflows](claude-code-workflow-openworkflow.md)
+> Английская версия: [OpenWorkflows usage tutorial](claude-code-workflow-openworkflow.en.md)
 
 ## 0. Начнём с финального интерфейса
 
@@ -55,18 +55,18 @@ npm run dev
 npm run desktop
 ```
 
-## 2. Сначала настройте модели
+## 2. Проверьте общие настройки и точку запуска
 
 <p align="center">
-  <img src="images/2-配置大模型.png" alt="Страница настроек моделей OpenWorkflows" width="640">
+  <img src="images/2-通用设置.png" alt="Страница общих настроек OpenWorkflows" width="640">
 </p>
-<p align="center"><em>Рисунок 2: Настройте провайдеров, локальный CLI и модель по умолчанию в Настройки / Модели.</em></p>
+<p align="center"><em>Рисунок 2: Настройте язык, локальный CLI и оболочку запуска в Настройки / Общие; активную модель / канал выбирайте внизу AI-ввода.</em></p>
 
-Прежде чем что-либо рисовать, откройте **Настройки / Модели**. Здесь вы настраиваете провайдеров, локальные CLI, модель по умолчанию и каналы выполнения.
+Прежде чем что-либо рисовать, откройте **Настройки / Общие**. Здесь настраиваются язык интерфейса, автоперевод промптов, локальный CLI и оболочка запуска.
 
-Каждый провайдер показывает свой статус, например: по умолчанию, прямое подключение, CLI-среда выполнения или недоступен. На скриншоте также видно, что ключ хранится локально.
+Старая вкладка **Модели** удалена. Активная модель или канал больше не выбираются в настройках; для текущего запроса используйте выпадающий список runtime внизу AI-ввода.
 
-Если вы уже используете `cc-switch` для управления конфигурациями моделей, вы можете импортировать эти данные здесь. Внизу области AI-ввода вы также можете выбрать, какую модель или канал использовать для этого запроса.
+Если отдельному узлу нужна другая модель, выберите этот узел и задайте переопределение в свойствах узла. Если поле оставить пустым, узел наследует выбор workflow или глобальный выбор.
 
 ## 3. Создайте новый workflow и введите запрос
 
@@ -75,7 +75,7 @@ npm run desktop
 </p>
 <p align="center"><em>Рисунок 3: Нажмите «Новый Workflow», затем опишите workflow в AI-вводе в правом нижнем углу.</em></p>
 
-После настройки модели нажмите **Новый Workflow** слева. Холст начинается с минимальной структуры: Start, один Agent и End.
+После проверки общих настроек и точки запуска нажмите **Новый Workflow** слева. Холст начинается с минимальной структуры: Start, один Agent и End.
 
 Настоящая отправная точка — не ручное рисование узлов. Это AI-ввод в правом нижнем углу. В этом примере я ввёл:
 
@@ -164,7 +164,7 @@ Start
 </p>
 <p align="center"><em>Рисунок 7: После готовности чертежа нажмите Run в верхней панели.</em></p>
 
-После подтверждения структуры, настроек модели и ключевых границ нажмите **Run**.
+После подтверждения структуры, выбора runtime и ключевых границ нажмите **Run**.
 
 Лучше не запускать workflow сразу после генерации. Сначала проверьте, имеют ли смысл параллельные ветви, находится ли узёл сводки после ветвей и охватывает ли валидация конечный результат.
 

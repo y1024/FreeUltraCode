@@ -2,6 +2,7 @@ import type { Edge, Node } from '@xyflow/react';
 import { MarkerType } from '@xyflow/react';
 import { DATA, EXEC, type IRGraph, type NodeType } from '@/core/ir';
 import type { NodeRunState } from '@/store/types';
+import type { Locale } from '@/lib/i18n';
 
 /**
  * Adapter that projects the authoritative {@link IRGraph} onto the
@@ -18,6 +19,8 @@ export interface FlowNodeData extends Record<string, unknown> {
   label: string;
   irType: NodeType;
   params: Record<string, unknown>;
+  /** Current UI locale for i18n lookups. */
+  locale: Locale;
   /** Semantic branch/loop parent from the IR, if any. */
   scopeParentId?: string;
   /** Live execution state — only set while a workflow is running. */
@@ -71,9 +74,10 @@ function toFlowNode(
   index: number,
   graph: IRGraph,
   runState: Record<string, NodeRunState> | undefined,
+  locale: Locale,
 ): FlowNode {
   const state = runState?.[node.id];
-  return {
+  const result: FlowNode = {
     id: node.id,
     type: flowNodeType(node.type),
     position: graph.layout?.[node.id] ?? { x: index * DEFAULT_DX, y: DEFAULT_Y },
@@ -81,6 +85,7 @@ function toFlowNode(
       label: nodeLabel(node),
       irType: node.type,
       params: node.params,
+      locale,
       ...(node.parent ? { scopeParentId: node.parent } : null),
       ...(state ? { runState: state } : null),
     },
@@ -88,6 +93,20 @@ function toFlowNode(
       ? { style: { width: CONTROL_W, height: CONTROL_H } }
       : null),
   };
+
+  // Rough initial size for start nodes so edges are close to correct
+  // before React Flow 12's ResizeObserver measures the real DOM size.
+  if (node.type === 'start') {
+    const inputs = (node.params.userInputs as string[] | undefined) ?? [];
+    if (inputs.length > 0) {
+      const avgChars = inputs.reduce((s, t) => s + t.length, 0) / inputs.length;
+      const estWidth = Math.min(420, Math.max(220, avgChars * 7 + 24));
+      const estHeight = 28 + inputs.length * 20 + 16;
+      result.style = { width: estWidth, height: estHeight };
+    }
+  }
+
+  return result;
 }
 
 function hasReachedRunState(
@@ -151,9 +170,10 @@ export interface FlowGraph {
 export function irToFlow(
   graph: IRGraph,
   runState?: Record<string, NodeRunState>,
+  locale?: Locale,
 ): FlowGraph {
   const nodes = graph.nodes.map((node, i) =>
-    toFlowNode(node, i, graph, runState),
+    toFlowNode(node, i, graph, runState, locale ?? 'en-US'),
   );
   const edges = graph.edges.map((edge) => toFlowEdge(edge, runState));
   return { nodes, edges };

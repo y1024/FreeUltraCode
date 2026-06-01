@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | Deutsch | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | <a href="claude-code-workflow-openworkflow.pt.md">Português</a> | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
+  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | <a href="claude-code-workflow-openworkflow.fr.md">Français</a> | Deutsch | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | <a href="claude-code-workflow-openworkflow.pt-BR.md">Português</a> | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.ko.md">한국어</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
 </div>
 
 # Claude Code hat Workflows. Was ist mit anderen Modellen? Ich habe OpenWorkflows ausprobiert
@@ -16,9 +16,9 @@ Also habe ich OpenWorkflows ausprobiert. Es verwandelt Claude Code-Workflows in 
 
 Dieses Tutorial beginnt nicht mit abstrakten Konzepten. Es führt die Screenshots der Reihe nach durch. Das Beispiel ist konkret: OpenWorkflows soll mehrere Erscheinungsbild-Themen unterstützen, standardmäßig Pencil verwenden und das Umschalten in Einstellungen / Erscheinungsbild ermöglichen.
 
-> Dies ist die englische Version des screenshotbasierten Anwendungstutorials.
+> Dies ist die deutsche Version des screenshotbasierten Anwendungstutorials.
 >
-> Chinesische Version: [OpenWorkflows Anwendungstutorial](claude-code-workflow-openworkflow.md)
+> Englische Version: [OpenWorkflows usage tutorial](claude-code-workflow-openworkflow.en.md)
 
 ## 0. Beginnen Sie mit der finalen Oberfläche
 
@@ -55,18 +55,18 @@ Für die Desktop-App verwenden Sie:
 npm run desktop
 ```
 
-## 2. Konfigurieren Sie zuerst die Modelle
+## 2. Allgemeine Einstellungen und Startpunkt prüfen
 
 <p align="center">
-  <img src="images/2-配置大模型.png" alt="OpenWorkflows Modelleinstellungsseite" width="640">
+  <img src="images/2-通用设置.png" alt="OpenWorkflows Seite Allgemeine Einstellungen" width="640">
 </p>
-<p align="center"><em>Abbildung 2: Konfigurieren Sie Provider, lokale CLI und das Standardmodell unter Einstellungen / Modelle.</em></p>
+<p align="center"><em>Abbildung 2: Konfigurieren Sie Sprache, lokale CLI und Start-Shell unter Einstellungen / Allgemein; das aktive Ausführungsmodell / den Kanal wählen Sie unten in der KI-Eingabe.</em></p>
 
-Bevor Sie irgendetwas zeichnen, öffnen Sie **Einstellungen / Modelle**. Hier konfigurieren Sie Provider, lokale CLIs, das Standardmodell und Runtime-Kanäle.
+Bevor Sie irgendetwas zeichnen, öffnen Sie **Einstellungen / Allgemein**. Hier konfigurieren Sie UI-Sprache, automatische Prompt-Übersetzung, lokale CLI und Start-Shell.
 
-Jeder Provider zeigt seinen Status an, z. B. Standard, Direkt, CLI-Runtime oder nicht verfügbar. Der Screenshot zeigt auch, dass der Schlüssel lokal gespeichert wird.
+Der alte Tab **Modelle** wurde entfernt. Das aktive Modell oder der Kanal wird nicht mehr in den Einstellungen gewählt; verwenden Sie dafür das Runtime-Dropdown unten in der KI-Eingabe.
 
-Wenn Sie bereits `cc-switch` zur Verwaltung von Modellkonfigurationen verwenden, können Sie diese Daten hier importieren. Unten im KI-Eingabebereich können Sie außerdem auswählen, welches Modell oder welcher Kanal für diese Anfrage verwendet werden soll.
+Wenn ein einzelner Node ein anderes Modell braucht, wählen Sie den Node aus und überschreiben Sie das Modell in den Node-Eigenschaften. Bleibt das Feld leer, erbt der Node die Workflow- oder globale Auswahl.
 
 ## 3. Erstellen Sie einen neuen Workflow und geben Sie eine Anfrage ein
 
@@ -75,7 +75,7 @@ Wenn Sie bereits `cc-switch` zur Verwaltung von Modellkonfigurationen verwenden,
 </p>
 <p align="center"><em>Abbildung 3: Klicken Sie auf Neuen Workflow erstellen, und beschreiben Sie den Workflow in der KI-Eingabe unten rechts.</em></p>
 
-Nachdem das Modell konfiguriert ist, klicken Sie links auf **Neuen Workflow erstellen**. Die Leinwand startet mit einer minimalen Struktur: Start, ein Agent und Ende.
+Nachdem die allgemeinen Einstellungen und der Runtime-Einstieg geprüft sind, klicken Sie links auf **Neuen Workflow erstellen**. Die Leinwand startet mit einer minimalen Struktur: Start, ein Agent und Ende.
 
 Der eigentliche Ausgangspunkt ist nicht das manuelle Zeichnen von Nodes. Es ist die KI-Eingabe unten rechts. In diesem Beispiel habe ich eingegeben:
 
@@ -164,7 +164,7 @@ Sobald Sie eine Auswahl treffen, schreibt die KI diese Entscheidung zurück in d
 </p>
 <p align="center"><em>Abbildung 7: Nachdem die Blueprint fertig ist, klicken Sie oben in der Leiste auf Ausführen.</em></p>
 
-Nachdem Struktur, Modelleinstellungen und wichtige Grenzen bestätigt wurden, klicken Sie auf **Ausführen**.
+Nachdem Struktur, Runtime-Auswahl und wichtige Grenzen bestätigt wurden, klicken Sie auf **Ausführen**.
 
 Es ist besser, den Workflow nicht im Moment seiner Generierung auszuführen. Prüfen Sie zuerst, ob die parallelen Verzweigungen Sinn ergeben, ob der Zusammenfassungs-Node nach den Verzweigungen kommt und ob die Validierung das Endergebnis abdeckt.
 

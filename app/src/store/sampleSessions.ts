@@ -21,6 +21,7 @@ import type {
   Session,
 } from './types';
 import { DEFAULT_LOCALE, type Locale } from '@/lib/i18n';
+import { PROMPT_TRANSLATIONS } from './promptTranslations';
 
 /**
  * Sample session history. The first entry is treated as the active session.
@@ -115,7 +116,7 @@ export const sampleMessages: Message[] = [
  * v4 = +互动澄清 (interactive: grill-me + clarify); v5 = +版本控制
  * (version-control); v6 = +生产级可靠性 prompt.
  */
-export const PROMPT_DEFAULTS_VERSION = 6;
+export const PROMPT_DEFAULTS_VERSION = 7;
 
 export const PROMPT_DEFAULT_ITEM_MIGRATIONS = [
   { groupId: 'reliability', itemId: 'reliability-production-grade' },
@@ -746,20 +747,37 @@ const englishPromptTranslations: Record<string, EnglishPromptGroup> = {
 function withDefaultTranslations(groups: PromptGroup[]): PromptGroup[] {
   return groups.map((group) => {
     const english = englishPromptTranslations[group.id];
+    // Aggregate group labels from ALL locale translation maps
+    const groupTranslations: Partial<Record<Locale, { label: string }>> = {
+      [DEFAULT_LOCALE]: { label: group.label },
+      ...(english ? { [EN_LOCALE]: { label: english.label } } : {}),
+    };
+    for (const [locale, map] of Object.entries(PROMPT_TRANSLATIONS)) {
+      const t = map[group.id];
+      if (t) {
+        groupTranslations[locale as Locale] = { label: t.label };
+      }
+    }
     return {
       ...group,
-      translations: {
-        [DEFAULT_LOCALE]: { label: group.label },
-        ...(english ? { [EN_LOCALE]: { label: english.label } } : {}),
-      },
+      translations: groupTranslations,
       items: group.items.map((item) => {
         const itemEnglish = english?.items[item.id];
+        const itemTranslations: Partial<
+          Record<Locale, { label: string; text: string }>
+        > = {
+          [DEFAULT_LOCALE]: { label: item.label, text: item.text },
+          ...(itemEnglish ? { [EN_LOCALE]: itemEnglish } : {}),
+        };
+        for (const [locale, map] of Object.entries(PROMPT_TRANSLATIONS)) {
+          const t = map[group.id]?.items[item.id];
+          if (t) {
+            itemTranslations[locale as Locale] = t;
+          }
+        }
         return {
           ...item,
-          translations: {
-            [DEFAULT_LOCALE]: { label: item.label, text: item.text },
-            ...(itemEnglish ? { [EN_LOCALE]: itemEnglish } : {}),
-          },
+          translations: itemTranslations,
         };
       }),
     };
@@ -785,6 +803,15 @@ export const permissionOptions: SelectOption[] = [
     translations: {
       'zh-CN': { label: '完全访问权限', hint: '读写' },
       'en-US': { label: 'Full access', hint: 'Read/write' },
+      'fr-FR': { label: 'Accès complet', hint: 'Lecture/écriture' },
+      'ru-RU': { label: 'Полный доступ', hint: 'Чтение/запись' },
+      'es-ES': { label: 'Acceso completo', hint: 'Lectura/escritura' },
+      'hi-IN': { label: 'पूर्ण पहुंच', hint: 'पढ़ना/लिखना' },
+      'ar-SA': { label: 'وصول كامل', hint: 'قراءة/كتابة' },
+      'pt-BR': { label: 'Acesso total', hint: 'Leitura/escrita' },
+      'ja-JP': { label: '完全アクセス', hint: '読み書き' },
+      'de-DE': { label: 'Voller Zugriff', hint: 'Lesen/Schreiben' },
+      'ko-KR': { label: '전체 액세스', hint: '읽기/쓰기' },
     },
   },
   {
@@ -794,6 +821,15 @@ export const permissionOptions: SelectOption[] = [
     translations: {
       'zh-CN': { label: '只读', hint: '不修改' },
       'en-US': { label: 'Read only', hint: 'No changes' },
+      'fr-FR': { label: 'Lecture seule', hint: 'Aucune modification' },
+      'ru-RU': { label: 'Только чтение', hint: 'Без изменений' },
+      'es-ES': { label: 'Solo lectura', hint: 'Sin cambios' },
+      'hi-IN': { label: 'केवल पढ़ने योग्य', hint: 'कोई परिवर्तन नहीं' },
+      'ar-SA': { label: 'للقراءة فقط', hint: 'لا تعديلات' },
+      'pt-BR': { label: 'Somente leitura', hint: 'Sem alterações' },
+      'ja-JP': { label: '読み取り専用', hint: '変更なし' },
+      'de-DE': { label: 'Nur Lesen', hint: 'Keine Änderungen' },
+      'ko-KR': { label: '읽기 전용', hint: '변경 없음' },
     },
   },
   {
@@ -803,6 +839,15 @@ export const permissionOptions: SelectOption[] = [
     translations: {
       'zh-CN': { label: '每次询问', hint: '逐步确认' },
       'en-US': { label: 'Ask each time', hint: 'Confirm step by step' },
+      'fr-FR': { label: 'Demander à chaque fois', hint: 'Confirmer étape par étape' },
+      'ru-RU': { label: 'Спрашивать каждый раз', hint: 'Подтверждать пошагово' },
+      'es-ES': { label: 'Preguntar cada vez', hint: 'Confirmar paso a paso' },
+      'hi-IN': { label: 'हर बार पूछें', hint: 'चरण दर चरण पुष्टि करें' },
+      'ar-SA': { label: 'السؤال في كل مرة', hint: 'تأكيد خطوة بخطوة' },
+      'pt-BR': { label: 'Perguntar sempre', hint: 'Confirmar passo a passo' },
+      'ja-JP': { label: '毎回確認', hint: '段階的に確認' },
+      'de-DE': { label: 'Jedes Mal fragen', hint: 'Schritt für Schritt bestätigen' },
+      'ko-KR': { label: '매번 묻기', hint: '단계별로 확인' },
     },
   },
 ];

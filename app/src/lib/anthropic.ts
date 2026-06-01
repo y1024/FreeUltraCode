@@ -177,8 +177,8 @@ IRGraph 结构（编译为真实可运行的 workflow，请严格遵守）：
 - 外壳：{version, meta, nodes, edges, layout?}
 - meta: {name, description?, adapter?, gateway?:{defaults?:{adapter, modelClass, providerId?, channelId?}}, schemaDefs?}（schemaDefs 把 schema 标识符名映射到其 JS 对象源码）
 - node: {id, type, parent?, label?, binding?, params}；type ∈ start|end|agent|parallel|pipeline|phase|branch|loop|workflow|log|variable|codeblock|consensus；parent 为所在 branch/loop 节点 id（顶层省略）
-- start.params.userInputs 用来合并记录用户的需求、补充说明和澄清回答；Start 节点在画布上只展示摘要。
-- 如果已有 start.params.userInputs，请保留并追加新输入，不要覆盖旧内容。
+- start.params.userInputs 记录用户的需求、补充说明和澄清回答；Start 节点在画布上只展示摘要。你只读此字段作为上下文，不要新增或改写条目——客户端会自动合并新输入。
+- 输出新蓝图时原样保留已有 userInputs 数组（不要增删改），系统侧会自动追加以保证完整。
 - agent.params: {prompt, label?, agentType?, model?, gateway?, schema?, isolation?, phase?}（用 agentType 而非 agent；schema 是裸标识符名，须是 meta.schemaDefs 的键；model ∈ haiku|sonnet|opus；默认继承 meta.gateway.defaults，不要给新节点写 model:'sonnet'）
 - parallel.params: {branches:[{prompt, agentType?, model?, schema?, label?}]}
 - pipeline.params: {items, stages:[{prompt, agentType?, schema?}]}（items 是输入数组表达式名）

@@ -79,6 +79,7 @@ import {
 } from '@/core/interaction';
 import {
   DEFAULT_LOCALE,
+  languageAdaptationPrompt,
   localizePromptGroup,
   localizePromptItem,
   SUPPORTED_LOCALES,
@@ -1259,9 +1260,7 @@ async function createNewChatSession(): Promise<void> {
 async function createNewWorkflowSession(): Promise<void> {
   const state = useStore.getState();
   const workspaceId = state.activeWorkspaceId;
-  const workflow = defaultBlueprint(
-    state.locale === 'en-US' ? 'Untitled Workflow' : '未命名工作流',
-  );
+  const workflow = defaultBlueprint(undefined, state.locale);
   const title =
     workflow.meta.name ??
     (state.locale === 'en-US' ? 'New Workflow' : '新建工作流');
@@ -1731,9 +1730,7 @@ const seedAppearance = loadAppearance();
 // review-changes sample whenever the store module re-initialised (e.g. on HMR).
 const seedWorkflow = migrateWorkflowGateway(
   loadLocalWorkflow() ??
-    defaultBlueprint(
-      seedLocale === 'en-US' ? 'Untitled Workflow' : '未命名工作流',
-    ),
+    defaultBlueprint(undefined, seedLocale),
   defaultComposer.model,
 );
 const seedWorkflowState = restoreWorkflowRunSnapshot(seedWorkflow);
@@ -2288,8 +2285,12 @@ export const useStore = create<StoreState>((set) => ({
     // Per-node model-strategy guidance is injected after UNIFIED_SYSTEM so both
     // the API and CLI paths (cliPrompt derives from system) carry it. 'inherit'
     // yields an empty string, preserving the pre-feature behavior exactly.
+    // Language adaptation instruction tells the LLM to generate node content in
+    // the current UI locale's language (no-op for zh-CN which is the default).
     const unifiedBase =
-      UNIFIED_SYSTEM + modelStrategyGuidance(state.composer.modelStrategy);
+      UNIFIED_SYSTEM +
+      modelStrategyGuidance(state.composer.modelStrategy) +
+      languageAdaptationPrompt(state.locale);
     const clarifyingSystem =
       `${unifiedBase}\n\n${INTERACTION_PROTOCOL}\n` +
       `（交互澄清模式：用户明确要求你先澄清/确认/反问时，才使用上面的交互块提一个关键问题；用户回答后不要继续追问，必须把回答吸收到 workflow 蓝图，并输出中文说明 + \`\`\`json 蓝图。）`;

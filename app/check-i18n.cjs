@@ -6,7 +6,7 @@ const uiFullStart = content.indexOf('const UI_FULL = {');
 const uiFullEnd = content.indexOf('} as const;', uiFullStart);
 const uiFullSection = content.slice(uiFullStart, uiFullEnd + 1);
 
-const locales = ['zh-CN', 'en-US', 'es-ES', 'fr-FR', 'ru-RU', 'ar-SA', 'hi-IN', 'ja-JP', 'pt-PT', 'de-DE'];
+const locales = ['zh-CN', 'en-US', 'es-ES', 'fr-FR', 'ru-RU', 'ar-SA', 'hi-IN', 'ja-JP', 'pt-BR', 'de-DE', 'ko-KR'];
 const keysByLocale = {};
 
 for (const locale of locales) {

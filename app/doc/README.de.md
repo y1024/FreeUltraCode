@@ -1,7 +1,7 @@
 # OpenWorkflows
 
 <div align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | Deutsch | <a href="README.es.md">Español</a> | <a href="README.pt.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
+  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | Deutsch | <a href="README.es.md">Español</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
 </div>
 
 Claude Code hat eine Workflow-Funktion eingeführt, um mehrstufige Multi-Agent-Abläufe, parallele Verzweigungen und Pipelines als ausführbare Skripte zu orchestrieren. OpenWorkflows verwandelt dieses Muster in einen visuellen Multi-Model-Editor: Erstellen Sie einen Workflow-Graphen und führen Sie ihn dann über Claude Code, Codex, Gemini und zukünftige lokale oder cloudbasierte Modell-Runtimes aus oder passen Sie ihn an.
@@ -14,7 +14,7 @@ Die gemeinsame IR hält die Workflow-Struktur portabel und ermöglicht es jedem 
 
 ## Anwendungstutorial
 
-- [OpenWorkflows Anwendungstutorial](claude-code-workflow-openworkflow.en.md) – Schritt-für-Schritt-Anleitung mit den Screenshots vom Setup bis zum Umschalten der Runtime.
+- [OpenWorkflows Anwendungstutorial](claude-code-workflow-openworkflow.de.md) – Schritt-für-Schritt-Anleitung mit Screenshots von den allgemeinen Einstellungen und der Runtime-Auswahl in der KI-Eingabe bis zur Blueprint-Erstellung, Ausführung und Erscheinungsbild-Umschaltung.
 
 ## Multi-Model-Workflow-Unterstützung
 
@@ -85,8 +85,8 @@ build.bat              Build the Windows installer
 
 ## Weitere Dokumentation
 
-- [Chinesische README](README.zh-CN.md)
-- [Chinesisches Anwendungstutorial](claude-code-workflow-openworkflow.md)
+- [Englische README](../../README.md)
+- [Englisches Anwendungstutorial](claude-code-workflow-openworkflow.en.md)
 
 ## Verifizierung
 

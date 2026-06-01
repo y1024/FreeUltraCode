@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { FlowNodeData } from '@/canvas/irToFlow';
+import { t } from '@/lib/i18n';
 import { readStartUserInputs } from '@/core/startInputs';
 import { ExecIn, ExecOut } from './handles';
 import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
@@ -21,8 +22,7 @@ function ControlNodeImpl({ data, selected }: NodeProps) {
   const glyph = isStart ? '⏵' : '⏹';
   const startInputs = isStart ? readStartUserInputs(d.params) : [];
   const hasStartInputs = startInputs.length > 0;
-  const previewInputs = startInputs.slice(0, 2);
-  const hiddenInputCount = Math.max(0, startInputs.length - previewInputs.length);
+  // Show all inputs — node size adapts via CSS (max-width + break-words)
 
   const run = runStateVisual(d.runState);
   const borderColor =
@@ -32,7 +32,7 @@ function ControlNodeImpl({ data, selected }: NodeProps) {
   if (hasStartInputs) {
     return (
       <div
-        className="relative inline-flex w-fit min-w-[220px] max-w-[320px] flex-col rounded-md border bg-panel font-sans shadow-md"
+        className="relative inline-flex w-fit min-w-[220px] max-w-[420px] flex-col rounded-md border bg-panel font-sans shadow-md"
         style={{ borderColor, boxShadow }}
         title={startInputs.join('\n\n')}
       >
@@ -41,8 +41,8 @@ function ControlNodeImpl({ data, selected }: NodeProps) {
           style={{ background: 'var(--panel-2)', color: accent }}
         >
           <span aria-hidden>{glyph}</span>
-          <span className="min-w-0 flex-1 truncate">
-            {d.label ?? 'Start'}
+          <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">
+            {d.label ?? t(d.locale, 'nodeType.start')}
           </span>
           <span className="rounded bg-border-soft px-1.5 py-0.5 font-mono text-[10px] text-fg-faint">
             {startInputs.length}
@@ -50,19 +50,14 @@ function ControlNodeImpl({ data, selected }: NodeProps) {
         </div>
 
         <div className="flex min-w-0 flex-col gap-1 px-3 py-2">
-          {previewInputs.map((input, index) => (
+          {startInputs.map((input, index) => (
             <div
               key={`${index}-${input.slice(0, 24)}`}
-              className="truncate rounded bg-panel-2 px-2 py-1 text-[10px] leading-4 text-fg-dim"
+              className="break-words whitespace-pre-wrap rounded bg-panel-2 px-2 py-1 text-[10px] leading-4 text-fg-dim"
             >
-              {input.replace(/\s+/g, ' ')}
+              {input}
             </div>
           ))}
-          {hiddenInputCount > 0 && (
-            <div className="font-mono text-[10px] text-fg-faint">
-              +{hiddenInputCount}
-            </div>
-          )}
         </div>
 
         <ExecOut id="exec_out" top={24} />
@@ -92,7 +87,7 @@ function ControlNodeImpl({ data, selected }: NodeProps) {
         {glyph}
       </span>
       <span className="text-sm font-medium" style={{ color: accent }}>
-        {d.label ?? (isStart ? 'Start' : 'End')}
+        {d.label ?? (isStart ? t(d.locale, 'nodeType.start') : t(d.locale, 'nodeType.end'))}
       </span>
 
       {/* Pins: start exposes exec_out only; end exposes exec_in only. */}

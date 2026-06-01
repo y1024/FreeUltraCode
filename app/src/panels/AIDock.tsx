@@ -27,6 +27,7 @@ import {
 } from '@/lib/composerStorage';
 import { shouldRefocusComposerAfterAppend } from '@/lib/composerEntryPolicy';
 import { tauriAvailable } from '@/lib/tauri';
+import { shallow } from 'zustand/shallow';
 import { useStore } from '@/store/useStore';
 
 const DEFAULT_DOCK_HEIGHT = 208; // matches the former h-52
@@ -429,7 +430,7 @@ function InteractionWidget({
 export default function AIDock() {
   const messages = useStore((s) => s.messages);
   const sendPrompt = useStore((s) => s.sendPrompt);
-  const runSelection = useStore((s) => workflowGatewaySelection(s.workflow));
+  const runSelection = useStore((s) => workflowGatewaySelection(s.workflow), shallow);
   const setGlobalRunSelection = useStore((s) => s.setGlobalRunSelection);
   const composer = useStore((s) => s.composer);
   const draft = useStore((s) => s.composerDraft);

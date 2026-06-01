@@ -1,7 +1,7 @@
 # OpenWorkflows
 
 <div align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt.md">Português</a> | Русский | <a href="README.ja.md">日本語</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
+  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.pt-BR.md">Português</a> | Русский | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
 </div>
 
 Claude Code представил функцию Workflow для оркестрации многоагентных шагов, параллельных ветвей и конвейеров в виде исполняемых скриптов. OpenWorkflows превращает этот подход в визуальный, мультимодельный редактор: создайте один граф Workflow, а затем запускайте или адаптируйте его в Claude Code, Codex, Gemini и будущих локальных или облачных средах выполнения моделей.
@@ -14,7 +14,7 @@ Claude Code представил функцию Workflow для оркестра
 
 ## Учебное руководство
 
-- [Руководство по использованию OpenWorkflows](claude-code-workflow-openworkflow.en.md) — пошаговое руководство со снимками экрана от настройки до переключения среды выполнения.
+- [Руководство по использованию OpenWorkflows](claude-code-workflow-openworkflow.ru.md) — пошаговое руководство со снимками экрана от общих настроек и выбора runtime в AI-вводе до генерации чертежа, запуска и переключения оформления.
 
 ## Поддержка мультимодельных рабочих процессов
 
@@ -85,8 +85,8 @@ build.bat              Build the Windows installer
 
 ## Дополнительная документация
 
-- [README на китайском](README.zh-CN.md)
-- [Руководство по использованию на китайском](claude-code-workflow-openworkflow.md)
+- [README на английском](../../README.md)
+- [Руководство по использованию на английском](claude-code-workflow-openworkflow.en.md)
 
 ## Проверка
 

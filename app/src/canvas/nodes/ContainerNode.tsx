@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { FlowNodeData } from '@/canvas/irToFlow';
+import { t } from '@/lib/i18n';
 import { ExecIn, ExecOut } from './handles';
 import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
 
@@ -34,12 +35,12 @@ function ContainerNodeImpl({ data, selected }: NodeProps) {
         style={{ background: 'var(--panel-2)', color: 'var(--accent-3)' }}
       >
         <span aria-hidden>{isLoop ? '↻' : '⋔'}</span>
-        <span>{isLoop ? 'Loop' : 'Branch'}</span>
+        <span>{isLoop ? t(d.locale, 'nodeType.loop') : t(d.locale, 'nodeType.branch')}</span>
       </div>
 
       <div className="min-h-0 flex-1 px-3 py-2">
         <div className="truncate text-sm font-medium text-fg">
-          {d.label || (isLoop ? 'Loop' : 'Branch')}
+          {d.label || (isLoop ? t(d.locale, 'nodeType.loop') : t(d.locale, 'nodeType.branch'))}
         </div>
         <div className="mt-1 truncate font-mono text-[10px] text-fg-faint">
           {keyword} ({condition})

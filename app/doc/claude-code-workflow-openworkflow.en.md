@@ -51,18 +51,18 @@ For the desktop app, use:
 npm run desktop
 ```
 
-## 2. Configure models first
+## 2. Confirm general settings and the run entry point
 
 <p align="center">
-  <img src="images/2-配置大模型.png" alt="OpenWorkflows model settings page" width="640">
+  <img src="images/2-通用设置.png" alt="OpenWorkflows general settings page" width="640">
 </p>
-<p align="center"><em>Figure 2: Configure providers, local CLI, and the default model in Settings / Models.</em></p>
+<p align="center"><em>Figure 2: Configure language, local CLI, and launch shell in Settings / General; choose the active run model / channel at the bottom of AI Input.</em></p>
 
-Before drawing anything, open **Settings / Models**. This is where you configure providers, local CLIs, the default model, and runtime channels.
+Before drawing anything, open **Settings / General**. This is where you configure the UI language, prompt auto-translation, local CLI, and launch shell.
 
-Each provider shows its status, such as default, direct, CLI runtime, or unavailable. The screenshot also shows that the key is stored locally.
+The old **Models** tab has been removed. The active model or channel is no longer configured in Settings; choose it for the current request from the runtime dropdown at the bottom of AI Input.
 
-If you already use `cc-switch` to manage model configs, you can import that data here. At the bottom of the AI input area, you can also choose which model or channel this request should use.
+If a specific node needs a different model, select the node and override the model in Node Properties. When left empty, the node inherits the workflow or global selection.
 
 ## 3. Create a new workflow and enter a request
 
@@ -71,7 +71,7 @@ If you already use `cc-switch` to manage model configs, you can import that data
 </p>
 <p align="center"><em>Figure 3: Click New Workflow, then describe the workflow in the bottom-right AI input.</em></p>
 
-After the model is configured, click **New Workflow** on the left. The canvas starts with a minimal structure: Start, one Agent, and End.
+After confirming the general settings and runtime entry point, click **New Workflow** on the left. The canvas starts with a minimal structure: Start, one Agent, and End.
 
 The real starting point is not manual node drawing. It is the AI input in the bottom-right corner. In this example, I typed:
 
@@ -160,7 +160,7 @@ Once you choose, the AI writes that decision back into the workflow blueprint an
 </p>
 <p align="center"><em>Figure 7: After the blueprint is ready, click Run in the top bar.</em></p>
 
-After the structure, model settings, and key boundaries are confirmed, click **Run**.
+After the structure, runtime selection, and key boundaries are confirmed, click **Run**.
 
 It is better not to run the workflow the moment it is generated. First check whether the parallel branches make sense, whether the summary node comes after the branches, and whether validation covers the final result.
 

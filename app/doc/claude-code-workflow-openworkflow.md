@@ -49,18 +49,18 @@ npm run dev
 npm run desktop
 ```
 
-## 2. 先配置大模型
+## 2. 先确认通用设置和运行入口
 
 <p align="center">
-  <img src="images/2-配置大模型.png" alt="OpenWorkflows 设置中的模型配置页面" width="640">
+  <img src="images/2-通用设置.png" alt="OpenWorkflows 设置中的通用设置页面" width="640">
 </p>
-<p align="center"><em>图 2：在“设置 / 模型”里配置 Provider、本机 CLI 和默认模型。</em></p>
+<p align="center"><em>图 2：在“设置 / 通用”里配置语言、本机 CLI 和启动 Shell；运行模型 / 渠道在 AI 输入框底部选择。</em></p>
 
-第一次使用不要急着画 workflow，先打开“设置 / 模型”。这里可以配置 Provider、本机 CLI、默认模型和运行通道。
+第一次使用不要急着画 workflow，先打开“设置 / 通用”。这里可以选择界面语言、提示词自动翻译、本机 CLI 和启动 Shell。
 
-每个 Provider 会显示当前状态，比如默认、直连、CLI 运行时、不可用等。API key 会保存在本机，截图里也能看到 “Key configured · stored locally”。
+原来的“模型”tab 已经移除。现在模型或渠道不在设置页里统一配置，而是在右下角 AI 输入框底部的运行时下拉框中为本次请求选择。
 
-如果你已经用 `cc-switch` 管理过模型配置，也可以从这里拷贝数据。后面在 AI 输入框底部，还能选择本次请求使用哪个模型或通道。
+如果需要让某个节点使用不同模型，选中节点后在节点属性里覆盖模型；不设置时会继承 workflow 或全局选择。
 
 ## 3. 新建 Workflow，然后输入需求
 
@@ -69,7 +69,7 @@ npm run desktop
 </p>
 <p align="center"><em>图 3：点击“新建 Workflow”，在右下角 AI 输入框描述要生成的流程。</em></p>
 
-配置好模型后，点击左侧“新建 Workflow”。画布上会出现一个最小结构：Start、一个 Agent、End。
+确认通用设置和运行入口后，点击左侧“新建 Workflow”。画布上会出现一个最小结构：Start、一个 Agent、End。
 
 真正开始的地方不是手动画节点，而是右下角的 AI 输入框。这个例子里，我输入的是：
 
@@ -158,7 +158,7 @@ Start
 </p>
 <p align="center"><em>图 7：蓝图确认后，点击顶部“运行”按钮。</em></p>
 
-等蓝图结构、模型配置和关键边界都确认后，再点顶部的“运行”。
+等蓝图结构、运行时选择和关键边界都确认后，再点顶部的“运行”。
 
 这里建议不要一生成蓝图就跑。先看并行分支是否合理，汇总节点是否在并行分支之后，验证节点是否覆盖到最后结果。
 

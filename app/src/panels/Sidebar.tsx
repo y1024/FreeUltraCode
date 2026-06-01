@@ -7,7 +7,6 @@ import {
 } from '@/store/useStore';
 import type { Session } from '@/store/types';
 import type { Locale } from '@/lib/i18n';
-import { openWorkflow } from '@/lib/persist';
 import { useResizableWidth } from '@/lib/useResizableWidth';
 import { t } from '@/lib/i18n';
 import SettingsModal from './SettingsModal';
@@ -15,7 +14,7 @@ import SettingsModal from './SettingsModal';
 /**
  * CONTRACT: default export, no props. Left session rail.
  *
- * Top  : primary actions — "+ New Workflow" / open workflow.
+ * Top  : primary action — "+ New Workflow".
  * Bottom: session history list, sourced from the store; clicking switches the
  *         active session context.
  *
@@ -97,7 +96,6 @@ export default function Sidebar() {
   const aiEditingSessions = useStore((s) => s.aiEditingSessions);
   const newWorkflow = useStore((s) => s.newWorkflow);
   const selectSession = useStore((s) => s.selectSession);
-  const openWorkflowSession = useStore((s) => s.openWorkflowSession);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { width, onResizeStart } = useResizableWidth({
@@ -107,19 +105,6 @@ export default function Sidebar() {
     max: 480,
     edge: 'right',
   });
-
-  // Open a .owf.json from disk (Tauri) or localStorage (browser fallback).
-  // The store loads it into the current mutable workflow, or into a new session
-  // when the current workflow is busy running / being AI-edited.
-  const handleOpen = async () => {
-    try {
-      const loaded = await openWorkflow(t(locale, 'dialog.openWorkflow'));
-      if (!loaded) return; // user cancelled or nothing to load
-      openWorkflowSession(loaded.ir, loaded.path ?? undefined);
-    } catch {
-      /* ignore — open errors stay quiet; user can retry */
-    }
-  };
 
   return (
     <aside
@@ -144,7 +129,7 @@ export default function Sidebar() {
       </div>
 
       {/* Primary actions */}
-      <div className="flex flex-col gap-2 px-3 pt-3 pb-2">
+      <div className="px-3 pt-3 pb-2.5">
         <button
           type="button"
           onClick={newWorkflow}
@@ -152,14 +137,6 @@ export default function Sidebar() {
         >
           <span className="text-base leading-none">＋</span>
           {t(locale, 'sidebar.newWorkflow')}
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleOpen()}
-          className="flex items-center gap-2 rounded-md border border-border bg-panel-2 px-3 py-2 text-sm text-fg transition-colors hover:border-accent hover:bg-border-soft disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <span className="text-base leading-none">⤓</span>
-          {t(locale, 'sidebar.open')}
         </button>
       </div>
 

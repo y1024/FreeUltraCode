@@ -1,29 +1,63 @@
 import { EXEC, type IRGraph } from './ir';
+import {
+  DEFAULT_LOCALE,
+  type Locale,
+  t,
+} from '@/lib/i18n';
 
 /**
  * Placeholder prompt(s) used by the fresh starter agent. `isEmptyWorkflow`
  * treats a graph carrying one of these (or a blank prompt) as "new/empty" so
  * the AI input box frames the instruction as a create rather than an edit.
- * Single source of truth — keep in sync with the default agent below.
+ *
+ * Collected from all supported locales so a default blueprint created in any
+ * language is recognised as empty.
  */
-export const PLACEHOLDER_PROMPTS = ['描述你的第一个步骤', '描述你的步骤'] as const;
+export const PLACEHOLDER_PROMPTS: readonly string[] = (() => {
+  const prompts = new Set<string>();
+  for (const locale of [
+    'zh-CN',
+    'en-US',
+    'fr-FR',
+    'ru-RU',
+    'es-ES',
+    'hi-IN',
+    'ar-SA',
+    'pt-BR',
+    'ja-JP',
+    'de-DE',
+    'ko-KR',
+  ] as const) {
+    prompts.add(t(locale as Locale, 'defaultBlueprint.agentPlaceholder'));
+    prompts.add(t(locale as Locale, 'defaultBlueprint.agentStep'));
+  }
+  return [...prompts];
+})();
 
 /**
- * CONTRACT: defaultBlueprint(name?) returns the canonical starter graph used by
- * newWorkflow(). It is a minimal, ready-to-edit spine:
+ * CONTRACT: defaultBlueprint(name?, locale?) returns the canonical starter
+ * graph used by newWorkflow(). It is a minimal, ready-to-edit spine:
  *
- *   start → agent("描述你的第一个步骤") → end
+ *   start → agent(placeholder) → end
  *
+ * The agent's label and prompt are localised to `locale` (defaults to zh-CN).
  * Two execution edges wire the spine; layout coordinates are pre-placed so the
  * canvas paints a clean left-to-right row. Downstream code relies on the node
  * ids (n_start / n_step1 / n_end), the exec port names (exec_out / exec_in),
  * and the IRGraph shape — keep them stable.
  */
-export function defaultBlueprint(name = '未命名工作流'): IRGraph {
+export function defaultBlueprint(
+  name?: string,
+  locale?: Locale,
+): IRGraph {
+  const localeCode: Locale = locale ?? DEFAULT_LOCALE;
+  const placeholder = t(localeCode, 'defaultBlueprint.agentPlaceholder');
+  const workflowName =
+    name ?? t(localeCode, 'defaultBlueprint.untitledWorkflow');
   return {
     version: 1,
     meta: {
-      name,
+      name: workflowName,
       adapter: 'claude-code',
       gateway: { defaults: { adapter: 'claude-code', modelClass: 'sonnet' } },
     },
@@ -37,9 +71,9 @@ export function defaultBlueprint(name = '未命名工作流'): IRGraph {
       {
         id: 'n_step1',
         type: 'agent',
-        label: '描述你的第一个步骤',
+        label: placeholder,
         params: {
-          prompt: '描述你的第一个步骤',
+          prompt: placeholder,
         },
       },
       {

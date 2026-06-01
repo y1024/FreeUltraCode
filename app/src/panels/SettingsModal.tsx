@@ -78,7 +78,6 @@ import {
 import { basename, pickFile } from '@/lib/folderPicker';
 import {
   LANGUAGE_SELECT_OPTIONS,
-  localizeSelectOption,
   t,
   type Locale,
   type TranslationKey,
@@ -133,9 +132,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
-  const languageOptions = LANGUAGE_SELECT_OPTIONS.map((option) =>
-    localizeSelectOption(option, locale),
-  );
+  const languageOptions: LanguageOption[] = [...LANGUAGE_SELECT_OPTIONS];
   const targetLanguages = languageOptions.filter(
     (option) => option.id !== locale,
   );

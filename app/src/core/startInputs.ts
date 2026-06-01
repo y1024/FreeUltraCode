@@ -43,8 +43,12 @@ function compactInputs(inputs: readonly string[]): string[] {
   const out: string[] = [];
   for (const input of inputs) {
     const text = input.trim();
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
+    if (!text) continue;
+    // Case-insensitive dedup so that "Add a step" and "add a step" are
+    // treated as the same entry. The first occurrence's casing is kept.
+    const norm = text.toLowerCase();
+    if (seen.has(norm)) continue;
+    seen.add(norm);
     out.push(text);
   }
   return out;

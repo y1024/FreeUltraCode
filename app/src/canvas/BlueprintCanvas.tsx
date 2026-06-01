@@ -81,85 +81,157 @@ const ADDABLE_NODES: {
     type: 'agent',
     label: 'Agent',
     accent: 'var(--accent)',
-    translations: { 'zh-CN': { label: '智能体' }, 'en-US': { label: 'Agent' } },
+    translations: {
+      'zh-CN': { label: '智能体' }, 'en-US': { label: 'Agent' },
+      'es-ES': { label: 'Agente' }, 'fr-FR': { label: 'Agent' },
+      'ru-RU': { label: 'Агент' }, 'ar-SA': { label: 'وكيل' },
+      'hi-IN': { label: 'एजेंट' }, 'ja-JP': { label: 'エージェント' },
+      'ko-KR': { label: '에이전트' }, 'pt-BR': { label: 'Agente' }, 'de-DE': { label: 'Agent' },
+    },
   },
   {
     type: 'parallel',
     label: 'Parallel',
     accent: 'var(--accent-2)',
-    translations: { 'zh-CN': { label: '并行' }, 'en-US': { label: 'Parallel' } },
+    translations: {
+      'zh-CN': { label: '并行' }, 'en-US': { label: 'Parallel' },
+      'es-ES': { label: 'Paralelo' }, 'fr-FR': { label: 'Parallèle' },
+      'ru-RU': { label: 'Параллельно' }, 'ar-SA': { label: 'متوازي' },
+      'hi-IN': { label: 'समानांतर' }, 'ja-JP': { label: '並列' },
+      'ko-KR': { label: '병렬' }, 'pt-BR': { label: 'Paralelo' }, 'de-DE': { label: 'Parallel' },
+    },
   },
   {
     type: 'pipeline',
     label: 'Pipeline',
     accent: 'var(--accent-2)',
-    translations: { 'zh-CN': { label: '流水线' }, 'en-US': { label: 'Pipeline' } },
+    translations: {
+      'zh-CN': { label: '流水线' }, 'en-US': { label: 'Pipeline' },
+      'es-ES': { label: 'Pipeline' }, 'fr-FR': { label: 'Pipeline' },
+      'ru-RU': { label: 'Конвейер' }, 'ar-SA': { label: 'خط أنابيب' },
+      'hi-IN': { label: 'पाइपलाइन' }, 'ja-JP': { label: 'パイプライン' },
+      'ko-KR': { label: '파이프라인' }, 'pt-BR': { label: 'Pipeline' }, 'de-DE': { label: 'Pipeline' },
+    },
   },
   {
     type: 'consensus',
     label: 'Consensus',
     accent: 'var(--accent-2)',
-    translations: { 'zh-CN': { label: '共识投票' }, 'en-US': { label: 'Consensus' } },
+    translations: {
+      'zh-CN': { label: '共识投票' }, 'en-US': { label: 'Consensus' },
+      'es-ES': { label: 'Consenso' }, 'fr-FR': { label: 'Consensus' },
+      'ru-RU': { label: 'Консенсус' }, 'ar-SA': { label: 'إجماع' },
+      'hi-IN': { label: 'आम सहमति' }, 'ja-JP': { label: '合意形成' },
+      'ko-KR': { label: '합의' }, 'pt-BR': { label: 'Consenso' }, 'de-DE': { label: 'Konsens' },
+    },
   },
   {
     type: 'phase',
     label: 'Phase',
     accent: 'var(--accent-3)',
-    translations: { 'zh-CN': { label: '阶段' }, 'en-US': { label: 'Phase' } },
+    translations: {
+      'zh-CN': { label: '阶段' }, 'en-US': { label: 'Phase' },
+      'es-ES': { label: 'Fase' }, 'fr-FR': { label: 'Phase' },
+      'ru-RU': { label: 'Фаза' }, 'ar-SA': { label: 'مرحلة' },
+      'hi-IN': { label: 'चरण' }, 'ja-JP': { label: 'フェーズ' },
+      'ko-KR': { label: '단계' }, 'pt-BR': { label: 'Fase' }, 'de-DE': { label: 'Phase' },
+    },
   },
   {
     type: 'branch',
     label: 'Branch',
     accent: 'var(--accent-3)',
-    translations: { 'zh-CN': { label: '分支' }, 'en-US': { label: 'Branch' } },
+    translations: {
+      'zh-CN': { label: '分支' }, 'en-US': { label: 'Branch' },
+      'es-ES': { label: 'Rama' }, 'fr-FR': { label: 'Branche' },
+      'ru-RU': { label: 'Ветвление' }, 'ar-SA': { label: 'تفرع' },
+      'hi-IN': { label: 'शाखा' }, 'ja-JP': { label: '分岐' },
+      'ko-KR': { label: '분기' }, 'pt-BR': { label: 'Ramificação' }, 'de-DE': { label: 'Verzweigung' },
+    },
   },
   {
     type: 'loop',
     label: 'Loop',
     accent: 'var(--accent-3)',
-    translations: { 'zh-CN': { label: '循环' }, 'en-US': { label: 'Loop' } },
+    translations: {
+      'zh-CN': { label: '循环' }, 'en-US': { label: 'Loop' },
+      'es-ES': { label: 'Bucle' }, 'fr-FR': { label: 'Boucle' },
+      'ru-RU': { label: 'Цикл' }, 'ar-SA': { label: 'حلقة' },
+      'hi-IN': { label: 'लूप' }, 'ja-JP': { label: 'ループ' },
+      'ko-KR': { label: '반복' }, 'pt-BR': { label: 'Ciclo' }, 'de-DE': { label: 'Schleife' },
+    },
   },
   {
     type: 'workflow',
     label: 'Sub-Workflow',
     accent: 'var(--accent)',
     translations: {
-      'zh-CN': { label: '子工作流' },
-      'en-US': { label: 'Sub-workflow' },
+      'zh-CN': { label: '子工作流' }, 'en-US': { label: 'Sub-workflow' },
+      'es-ES': { label: 'Subflujo' }, 'fr-FR': { label: 'Sous-flux' },
+      'ru-RU': { label: 'Подпроцесс' }, 'ar-SA': { label: 'سير عمل فرعي' },
+      'hi-IN': { label: 'उप-कार्यप्रवाह' }, 'ja-JP': { label: 'サブワークフロー' },
+      'ko-KR': { label: '하위 워크플로우' }, 'pt-BR': { label: 'Subfluxo' }, 'de-DE': { label: 'Unterworkflow' },
     },
   },
   {
     type: 'log',
     label: 'Log',
     accent: 'var(--fg-dim)',
-    translations: { 'zh-CN': { label: '日志' }, 'en-US': { label: 'Log' } },
+    translations: {
+      'zh-CN': { label: '日志' }, 'en-US': { label: 'Log' },
+      'es-ES': { label: 'Registro' }, 'fr-FR': { label: 'Journal' },
+      'ru-RU': { label: 'Журнал' }, 'ar-SA': { label: 'سجل' },
+      'hi-IN': { label: 'लॉग' }, 'ja-JP': { label: 'ログ' },
+      'ko-KR': { label: '로그' }, 'pt-BR': { label: 'Registo' }, 'de-DE': { label: 'Protokoll' },
+    },
   },
   {
     type: 'variable',
     label: 'Variable',
     accent: 'var(--fg-dim)',
-    translations: { 'zh-CN': { label: '变量' }, 'en-US': { label: 'Variable' } },
+    translations: {
+      'zh-CN': { label: '变量' }, 'en-US': { label: 'Variable' },
+      'es-ES': { label: 'Variable' }, 'fr-FR': { label: 'Variable' },
+      'ru-RU': { label: 'Переменная' }, 'ar-SA': { label: 'متغير' },
+      'hi-IN': { label: 'चर' }, 'ja-JP': { label: '変数' },
+      'ko-KR': { label: '변수' }, 'pt-BR': { label: 'Variável' }, 'de-DE': { label: 'Variable' },
+    },
   },
   {
     type: 'codeblock',
     label: 'Code Block',
     accent: 'var(--fg-dim)',
     translations: {
-      'zh-CN': { label: '代码块' },
-      'en-US': { label: 'Code block' },
+      'zh-CN': { label: '代码块' }, 'en-US': { label: 'Code block' },
+      'es-ES': { label: 'Bloque de código' }, 'fr-FR': { label: 'Bloc de code' },
+      'ru-RU': { label: 'Блок кода' }, 'ar-SA': { label: 'كتلة تعليمات برمجية' },
+      'hi-IN': { label: 'कोड ब्लॉक' }, 'ja-JP': { label: 'コードブロック' },
+      'ko-KR': { label: '코드 블록' }, 'pt-BR': { label: 'Bloco de código' }, 'de-DE': { label: 'Codeblock' },
     },
   },
   {
     type: 'start',
     label: 'Start',
     accent: 'var(--accent-3)',
-    translations: { 'zh-CN': { label: '开始' }, 'en-US': { label: 'Start' } },
+    translations: {
+      'zh-CN': { label: '开始' }, 'en-US': { label: 'Start' },
+      'es-ES': { label: 'Inicio' }, 'fr-FR': { label: 'Début' },
+      'ru-RU': { label: 'Начало' }, 'ar-SA': { label: 'بداية' },
+      'hi-IN': { label: 'शुरू' }, 'ja-JP': { label: '開始' },
+      'ko-KR': { label: '시작' }, 'pt-BR': { label: 'Início' }, 'de-DE': { label: 'Start' },
+    },
   },
   {
     type: 'end',
     label: 'End',
     accent: 'var(--accent-4)',
-    translations: { 'zh-CN': { label: '结束' }, 'en-US': { label: 'End' } },
+    translations: {
+      'zh-CN': { label: '结束' }, 'en-US': { label: 'End' },
+      'es-ES': { label: 'Fin' }, 'fr-FR': { label: 'Fin' },
+      'ru-RU': { label: 'Конец' }, 'ar-SA': { label: 'نهاية' },
+      'hi-IN': { label: 'समाप्त' }, 'ja-JP': { label: '終了' },
+      'ko-KR': { label: '종료' }, 'pt-BR': { label: 'Fim' }, 'de-DE': { label: 'Ende' },
+    },
   },
 ];
 
@@ -231,10 +303,10 @@ function BlueprintCanvasInner() {
   // Layout coordinates are preserved by irToFlow, so a drag that wrote back via
   // setNodePosition will land at the same spot on re-projection.
   useEffect(() => {
-    const { nodes: flowNodes, edges: flowEdges } = irToFlow(workflow, runState);
+    const { nodes: flowNodes, edges: flowEdges } = irToFlow(workflow, runState, locale);
     setNodes(flowNodes);
     setEdges(flowEdges);
-  }, [workflow, runState, setNodes, setEdges]);
+  }, [workflow, runState, locale, setNodes, setEdges]);
 
   // Mirror the store selection onto React Flow node `selected` flags.
   useEffect(() => {

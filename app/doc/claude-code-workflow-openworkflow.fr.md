@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | Français | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | <a href="claude-code-workflow-openworkflow.pt.md">Português</a> | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
+  <a href="claude-code-workflow-openworkflow.en.md">English</a> | <a href="claude-code-workflow-openworkflow.md">中文</a> | Français | <a href="claude-code-workflow-openworkflow.de.md">Deutsch</a> | <a href="claude-code-workflow-openworkflow.es.md">Español</a> | <a href="claude-code-workflow-openworkflow.pt-BR.md">Português</a> | <a href="claude-code-workflow-openworkflow.ru.md">Русский</a> | <a href="claude-code-workflow-openworkflow.ja.md">日本語</a> | <a href="claude-code-workflow-openworkflow.ko.md">한국어</a> | <a href="claude-code-workflow-openworkflow.hi.md">हिन्दी</a> | <a href="claude-code-workflow-openworkflow.ar.md">العربية</a>
 </div>
 
 # Claude Code propose des Workflows. Et les autres modèles ? J'ai essayé OpenWorkflows
@@ -16,9 +16,9 @@ J'ai donc essayé OpenWorkflows. Il transforme les workflows de style Claude Cod
 
 Ce tutoriel ne commence pas par des concepts abstraits. Il parcourt les captures d'écran dans l'ordre. L'exemple est concret : faire en sorte qu'OpenWorkflows prenne en charge plusieurs thèmes d'apparence, que le thème Pencil soit appliqué par défaut, et qu'il soit possible de les changer dans Paramètres / Apparence.
 
-> Il s'agit de la version anglaise du tutoriel d'utilisation basé sur les captures d'écran.
+> Il s'agit de la version française du tutoriel d'utilisation basé sur les captures d'écran.
 >
-> Version chinoise : [Tutoriel d'utilisation d'OpenWorkflows](claude-code-workflow-openworkflow.md)
+> Version anglaise : [OpenWorkflows usage tutorial](claude-code-workflow-openworkflow.en.md)
 
 ## 0. Commencer par l'interface finale
 
@@ -55,18 +55,18 @@ Pour l'application de bureau, utilisez :
 npm run desktop
 ```
 
-## 2. Configurer d'abord les modèles
+## 2. Vérifier les réglages généraux et le point d'exécution
 
 <p align="center">
-  <img src="images/2-配置大模型.png" alt="Page de paramètres des modèles d'OpenWorkflows" width="640">
+  <img src="images/2-通用设置.png" alt="Page des paramètres généraux d'OpenWorkflows" width="640">
 </p>
-<p align="center"><em>Figure 2 : Configurez les fournisseurs, la CLI locale et le modèle par défaut dans Paramètres / Modèles.</em></p>
+<p align="center"><em>Figure 2 : Configurez la langue, la CLI locale et le shell de lancement dans Paramètres / Général ; choisissez le modèle / canal d'exécution actif en bas de la zone de saisie IA.</em></p>
 
-Avant de dessiner quoi que ce soit, ouvrez **Paramètres / Modèles**. C'est ici que vous configurez les fournisseurs, les CLI locales, le modèle par défaut et les canaux d'exécution.
+Avant de dessiner quoi que ce soit, ouvrez **Paramètres / Général**. C'est ici que vous configurez la langue de l'interface, la traduction automatique des prompts, la CLI locale et le shell de lancement.
 
-Chaque fournisseur indique son statut, tel que défaut, direct, runtime CLI ou indisponible. La capture d'écran montre également que la clé est stockée localement.
+L'ancien onglet **Modèles** a été supprimé. Le modèle ou canal actif ne se configure plus dans les paramètres ; pour la requête en cours, choisissez-le dans le menu runtime en bas de la zone de saisie IA.
 
-Si vous utilisez déjà `cc-switch` pour gérer les configurations de modèles, vous pouvez importer ces données ici. En bas de la zone de saisie IA, vous pouvez également choisir quel modèle ou canal cette requête doit utiliser.
+Si un nœud précis doit utiliser un autre modèle, sélectionnez-le et remplacez le modèle dans les propriétés du nœud. Si le champ reste vide, le nœud hérite du choix du workflow ou du choix global.
 
 ## 3. Créer un nouveau workflow et saisir une requête
 
@@ -75,7 +75,7 @@ Si vous utilisez déjà `cc-switch` pour gérer les configurations de modèles, 
 </p>
 <p align="center"><em>Figure 3 : Cliquez sur Nouveau Workflow, puis décrivez le workflow dans la zone de saisie IA en bas à droite.</em></p>
 
-Une fois le modèle configuré, cliquez sur **Nouveau Workflow** à gauche. Le canevas démarre avec une structure minimale : Démarrer, un Agent et Fin.
+Après avoir vérifié les réglages généraux et le point d'exécution, cliquez sur **Nouveau Workflow** à gauche. Le canevas démarre avec une structure minimale : Démarrer, un Agent et Fin.
 
 Le véritable point de départ n'est pas le dessin manuel des nœuds. C'est la zone de saisie IA dans le coin inférieur droit. Dans cet exemple, j'ai tapé :
 
@@ -164,7 +164,7 @@ Une fois votre choix fait, l'IA réécrit cette décision dans le blueprint de w
 </p>
 <p align="center"><em>Figure 7 : Une fois le blueprint prêt, cliquez sur Exécuter dans la barre supérieure.</em></p>
 
-Après avoir confirmé la structure, les paramètres des modèles et les limites clés, cliquez sur **Exécuter**.
+Après avoir confirmé la structure, le choix du runtime et les limites clés, cliquez sur **Exécuter**.
 
 Il vaut mieux ne pas exécuter le workflow dès qu'il est généré. Vérifiez d'abord si les branches parallèles ont du sens, si le nœud de synthèse vient après les branches, et si la validation couvre le résultat final.
 

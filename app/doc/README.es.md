@@ -1,7 +1,7 @@
 # OpenWorkflows
 
 <div align="center">
-  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | Español | <a href="README.pt.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
+  <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | Español | <a href="README.pt-BR.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
 </div>
 
 Claude Code introdujo una función de Workflow para orquestar pasos multiagente, ramas paralelas y pipelines como scripts ejecutables. OpenWorkflows convierte ese patrón en un editor visual y multimodelo: construye un único grafo de Workflow y luego ejecútalo o adáptalo en Claude Code, Codex, Gemini y futuros entornos de ejecución de modelos locales o en la nube.
@@ -14,7 +14,7 @@ El IR compartido mantiene portable la estructura del workflow, al tiempo que per
 
 ## Tutorial de uso
 
-- [Tutorial de uso de OpenWorkflows](claude-code-workflow-openworkflow.en.md) - recorrido paso a paso con capturas de pantalla, desde la configuración hasta el cambio de runtime.
+- [Tutorial de uso de OpenWorkflows](claude-code-workflow-openworkflow.es.md) - recorrido paso a paso con capturas de pantalla, desde la configuración general y la selección de runtime en la entrada de IA hasta la generación del blueprint, la ejecución y el cambio de apariencia.
 
 ## Soporte de workflows multimodelo
 
@@ -85,8 +85,8 @@ build.bat              Build the Windows installer
 
 ## Más documentación
 
-- [README en chino](README.zh-CN.md)
-- [Tutorial de uso en chino](claude-code-workflow-openworkflow.md)
+- [README en inglés](../../README.md)
+- [Tutorial de uso en inglés](claude-code-workflow-openworkflow.en.md)
 
 ## Verificación
 

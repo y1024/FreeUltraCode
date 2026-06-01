@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { IRAgentSpec } from '@/core/ir';
 import type { FlowNodeData } from '@/canvas/irToFlow';
+import { t } from '@/lib/i18n';
 import { DataIn, DataOut, ExecIn, ExecOut } from './handles';
 import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
 
@@ -35,7 +36,7 @@ function PipelineNodeImpl({ data, selected }: NodeProps) {
         style={{ background: 'var(--panel-2)', color: 'var(--accent-2)' }}
       >
         <span aria-hidden>⛓</span>
-        <span>Pipeline</span>
+        <span>{t(d.locale, 'nodeType.pipeline')}</span>
       </div>
 
       <div className="px-3 py-2">

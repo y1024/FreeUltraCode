@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { FlowNodeData } from '@/canvas/irToFlow';
+import { t } from '@/lib/i18n';
 import { DataIn, DataOut, ExecIn, ExecOut } from './handles';
 import { BADGE_BASE_STYLE, runStateVisual } from './runStateStyles';
 
@@ -55,7 +56,7 @@ function AgentNodeImpl({ data, selected }: NodeProps) {
         style={{ background: 'var(--panel-2)', color: 'var(--accent)' }}
       >
         <span aria-hidden>▶</span>
-        <span>Agent</span>
+        <span>{t(d.locale, 'nodeType.agent')}</span>
       </div>
 
       {/* Body */}

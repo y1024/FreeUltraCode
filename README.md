@@ -1,7 +1,7 @@
 # OpenWorkflows
 
 <div align="center">
-  English | <a href="app/doc/README.zh-CN.md">中文</a> | <a href="app/doc/README.fr.md">Français</a> | <a href="app/doc/README.de.md">Deutsch</a> | <a href="app/doc/README.es.md">Español</a> | <a href="app/doc/README.pt.md">Português</a> | <a href="app/doc/README.ru.md">Русский</a> | <a href="app/doc/README.ja.md">日本語</a> | <a href="app/doc/README.hi.md">हिन्दी</a> | <a href="app/doc/README.ar.md">العربية</a>
+  English | <a href="app/doc/README.zh-CN.md">中文</a> | <a href="app/doc/README.fr.md">Français</a> | <a href="app/doc/README.de.md">Deutsch</a> | <a href="app/doc/README.es.md">Español</a> | <a href="app/doc/README.pt-BR.md">Português</a> | <a href="app/doc/README.ru.md">Русский</a> | <a href="app/doc/README.ja.md">日本語</a> | <a href="app/doc/README.ko.md">한국어</a> | <a href="app/doc/README.hi.md">हिन्दी</a> | <a href="app/doc/README.ar.md">العربية</a>
 </div>
 
 Claude Code introduced a Workflow feature for orchestrating multi-agent steps, parallel branches, and pipelines as executable scripts. OpenWorkflows turns that pattern into a visual, multi-model editor: build one Workflow graph, then run or adapt it across Claude Code, Codex, Gemini, and future local or cloud model runtimes.
@@ -14,7 +14,7 @@ The shared IR keeps workflow structure portable while letting each node choose i
 
 ## Usage Tutorial
 
-- [OpenWorkflows usage tutorial](app/doc/claude-code-workflow-openworkflow.en.md) - step-by-step walkthrough with the screenshots from setup to runtime switching.
+- [OpenWorkflows usage tutorial](app/doc/claude-code-workflow-openworkflow.en.md) - step-by-step walkthrough from General settings and AI-input runtime selection to blueprint generation, running, and appearance switching.
 
 ## Multi-Model Workflow Support
 

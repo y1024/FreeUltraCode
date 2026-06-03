@@ -17,6 +17,8 @@ type MockSession = {
   updatedAt?: number;
   preview?: string;
   isWorkflow: boolean;
+  simple?: boolean;
+  favorite?: boolean;
   runStatus?: 'success' | 'error' | 'interrupted';
 };
 
@@ -44,13 +46,26 @@ type MockStoreState = {
     { completed: number; incomplete: number; percent: number | null }
   >;
   aiEditingSessions: SessionKey[];
+  chattingSessions: SessionKey[];
   newWorkflow: () => void;
+  newSession: () => void;
+  exportWorkflowSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    title?: string,
+  ) => void;
+  importWorkflowToWorkspace: (workspaceId: string, title?: string) => void;
   selectSession: (sessionId: string, workspaceId?: string) => void;
   deleteSession: (sessionId: string, workspaceId?: string) => void;
   renameWorkflowSession: (
     sessionId: string,
     workspaceId: string | null,
     name: string,
+  ) => Promise<void>;
+  setWorkflowFavoriteSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    favorite: boolean,
   ) => Promise<void>;
   setWorkflow: () => void;
   markSaved: () => void;
@@ -68,15 +83,14 @@ vi.mock('@/store/useStore', () => {
 
   const sessionLiveStatus = (
     sessionKey: SessionKey,
-    liveState: Pick<
-      MockStoreState,
-      'runningSessions' | 'aiEditingSessions'
-    >,
+    liveState: Pick<MockStoreState, 'runningSessions' | 'aiEditingSessions'> &
+      Partial<Pick<MockStoreState, 'chattingSessions'>>,
   ) => {
     const isMatch = (item: SessionKey) =>
       item.workspaceId === sessionKey.workspaceId &&
       item.sessionId === sessionKey.sessionId;
     if (liveState.runningSessions.some(isMatch)) return 'running';
+    if ((liveState.chattingSessions ?? []).some(isMatch)) return 'running';
     if (liveState.aiEditingSessions.some(isMatch)) return 'aiEditing';
     return null;
   };
@@ -100,10 +114,8 @@ vi.mock('@/store/useStore', () => {
     workflowDeleteProtectionReason: (
       session: Pick<MockSession, 'id' | 'isWorkflow'>,
       workspaceId: string | null | undefined,
-      liveState: Pick<
-        MockStoreState,
-        'runningSessions' | 'aiEditingSessions'
-      >,
+      liveState: Pick<MockStoreState, 'runningSessions' | 'aiEditingSessions'> &
+        Partial<Pick<MockStoreState, 'chattingSessions'>>,
     ) => {
       if (!session.isWorkflow) return null;
       return sessionLiveStatus(
@@ -169,10 +181,15 @@ function resetSidebarStore(): void {
     runningSessions: [],
     runningSessionProgress: {},
     aiEditingSessions: [],
+    chattingSessions: [],
     newWorkflow: vi.fn(),
+    newSession: vi.fn(),
+    exportWorkflowSession: vi.fn(),
+    importWorkflowToWorkspace: vi.fn(),
     selectSession: vi.fn(),
     deleteSession: vi.fn(),
     renameWorkflowSession: vi.fn(async () => undefined),
+    setWorkflowFavoriteSession: vi.fn(async () => undefined),
     setWorkflow: vi.fn(),
     markSaved: vi.fn(),
   };
@@ -229,7 +246,15 @@ function statusIndicator(dot: HTMLElement | null): HTMLElement | null {
 
 function newWorkflowButton(container: HTMLElement): HTMLButtonElement {
   const button = Array.from(container.querySelectorAll('button')).find((item) =>
-    item.textContent?.includes('新建 Workflow'),
+    item.textContent?.includes('新建Workflow'),
+  );
+  expect(button).toBeInstanceOf(HTMLButtonElement);
+  return button as HTMLButtonElement;
+}
+
+function newSessionButton(container: HTMLElement): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button')).find((item) =>
+    item.textContent?.includes('新建会话'),
   );
   expect(button).toBeInstanceOf(HTMLButtonElement);
   return button as HTMLButtonElement;
@@ -281,6 +306,36 @@ function contextMenuDeleteButton(container: HTMLElement): HTMLButtonElement {
   const button = Array.from(container.querySelectorAll('button')).find(
     (item) => item.textContent?.includes('删除'),
   );
+  expect(button).toBeInstanceOf(HTMLButtonElement);
+  return button as HTMLButtonElement;
+}
+
+function queryContextMenuExportButton(
+  container: HTMLElement,
+): HTMLButtonElement | null {
+  return (
+    (Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('导出 Workflow 到文件'),
+    ) as HTMLButtonElement | undefined) ?? null
+  );
+}
+
+function contextMenuFavoriteButton(container: HTMLElement): HTMLButtonElement {
+  const button = Array.from(
+    container.querySelectorAll('button:not([role="tab"])'),
+  ).find(
+    (item) =>
+      item.textContent?.trim() === '收藏' ||
+      item.textContent?.trim() === '取消收藏',
+  );
+  expect(button).toBeInstanceOf(HTMLButtonElement);
+  return button as HTMLButtonElement;
+}
+
+function tabButton(container: HTMLElement, label: string): HTMLButtonElement {
+  const button = Array.from(
+    container.querySelectorAll('button[role="tab"]'),
+  ).find((item) => item.textContent?.includes(label));
   expect(button).toBeInstanceOf(HTMLButtonElement);
   return button as HTMLButtonElement;
 }
@@ -357,6 +412,147 @@ describe('Sidebar workflow rename', () => {
 
       expect(view.container.textContent).toContain('删除');
       expect(view.container.textContent).not.toContain('重命名');
+      expect(queryContextMenuExportButton(view.container)).toBeNull();
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows workflow export only for full workflow sessions', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      await openSessionContextMenu(sessionButton(view.container, SESSION.title));
+
+      const exportButton = queryContextMenuExportButton(view.container);
+      expect(exportButton).toBeInstanceOf(HTMLButtonElement);
+
+      await clickButton(exportButton as HTMLButtonElement);
+
+      expect(mockState.exportWorkflowSession).toHaveBeenCalledWith(
+        SESSION.id,
+        WORKSPACE.id,
+        '导出 Workflow 到文件',
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('favorites workflow sessions from the context menu', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      await openSessionContextMenu(sessionButton(view.container, SESSION.title));
+
+      const favoriteButton = contextMenuFavoriteButton(view.container);
+      expect(favoriteButton.textContent).toContain('收藏');
+
+      await clickButton(favoriteButton);
+
+      expect(mockState.setWorkflowFavoriteSession).toHaveBeenCalledWith(
+        SESSION.id,
+        WORKSPACE.id,
+        true,
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('unfavorites already favorited workflow sessions from the context menu', async () => {
+    resetSidebarStore();
+    const favoriteSession = {
+      ...SESSION,
+      favorite: true,
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [favoriteSession],
+    };
+    mockState.sessions = [favoriteSession];
+
+    const view = await renderSidebar();
+
+    try {
+      await openSessionContextMenu(sessionButton(view.container, SESSION.title));
+
+      const favoriteButton = contextMenuFavoriteButton(view.container);
+      expect(favoriteButton.textContent).toContain('取消收藏');
+
+      await clickButton(favoriteButton);
+
+      expect(mockState.setWorkflowFavoriteSession).toHaveBeenCalledWith(
+        SESSION.id,
+        WORKSPACE.id,
+        false,
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows only favorited workflows in the favorites tab', async () => {
+    resetSidebarStore();
+    const favoriteSession = {
+      ...SESSION,
+      favorite: true,
+      title: 'Favorite Workflow',
+    };
+    const plainWorkflow = {
+      ...SESSION,
+      id: 's_plain',
+      title: 'Plain Workflow',
+    };
+    const favoriteChat = {
+      ...SESSION,
+      id: 's_chat',
+      title: 'Favorite Chat',
+      isWorkflow: false,
+      favorite: true,
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [favoriteSession, plainWorkflow, favoriteChat],
+    };
+    mockState.sessions = [favoriteSession, plainWorkflow, favoriteChat];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 3 }];
+
+    const view = await renderSidebar();
+
+    try {
+      await clickButton(tabButton(view.container, '收藏夹'));
+
+      expect(view.container.textContent).toContain('Favorite Workflow');
+      expect(view.container.textContent).not.toContain('Plain Workflow');
+      expect(view.container.textContent).not.toContain('Favorite Chat');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('hides workflow export for simple workflow chat sessions', async () => {
+    resetSidebarStore();
+    const simpleSession = {
+      ...SESSION,
+      id: 's_simple',
+      title: 'Simple chat',
+      simple: true,
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [simpleSession],
+    };
+    mockState.sessions = [simpleSession];
+    mockState.activeSessionId = simpleSession.id;
+
+    const view = await renderSidebar();
+
+    try {
+      await openSessionContextMenu(sessionButton(view.container, 'Simple chat'));
+
+      expect(view.container.textContent).toContain('删除');
+      expect(queryContextMenuExportButton(view.container)).toBeNull();
+      expect(mockState.exportWorkflowSession).not.toHaveBeenCalled();
     } finally {
       await view.cleanup();
     }
@@ -595,6 +791,33 @@ describe('Sidebar running progress dot', () => {
     }
   });
 
+  it('renders an in-flight chat session as a green running spinner', async () => {
+    resetSidebarStore();
+    const chatSession = { ...SESSION, isWorkflow: false };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [chatSession],
+    };
+    mockState.sessions = [chatSession];
+    mockState.chattingSessions = [SESSION_KEY];
+
+    const view = await renderSidebar();
+
+    try {
+      const dot = statusDot(view.container, 'running');
+      expect(dot).not.toBeNull();
+      expect(dot?.getAttribute('title')).toBe('正在运行，进度未知');
+      const indicator = statusIndicator(dot);
+      expect(indicator).not.toBeNull();
+      expect(indicator?.classList.contains('owf-status-spinner')).toBe(true);
+      expect(indicator?.style.getPropertyValue('--owf-status-color')).toBe(
+        'var(--status-success)',
+      );
+      expect(statusDot(view.container, 'thinking')).toBeNull();
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it.each([
     ['success', 'success', '已完成', 'var(--status-success)'],
     ['error', 'failed', '已失败', 'var(--status-error)'],
@@ -662,6 +885,24 @@ describe('Sidebar running progress dot', () => {
       });
 
       expect(mockState.newWorkflow).toHaveBeenCalledTimes(1);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('creates a chat session from the secondary top action', async () => {
+    resetSidebarStore();
+
+    const view = await renderSidebar();
+
+    try {
+      const button = newSessionButton(view.container);
+
+      await act(async () => {
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      expect(mockState.newSession).toHaveBeenCalledTimes(1);
     } finally {
       await view.cleanup();
     }
@@ -788,7 +1029,27 @@ describe('Sidebar session search', () => {
         view.container.querySelector('input[aria-label="搜索会话"]'),
       ).toBeNull();
       expect(view.container.textContent).toContain('暂无会话');
-      expect(view.container.textContent).toContain('新建 Workflow');
+      expect(view.container.textContent).toContain('新建Workflow');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows an empty favorites state when there are no sessions', async () => {
+    resetSidebarStore();
+    mockState.sessions = [];
+    mockState.workspaces = [];
+    mockState.sessionTree = {};
+    mockState.activeWorkspaceId = null;
+    mockState.activeSessionId = null;
+
+    const view = await renderSidebar();
+
+    try {
+      await clickButton(tabButton(view.container, '收藏夹'));
+
+      expect(queryHistorySearchInput(view.container)).toBeNull();
+      expect(view.container.textContent).toContain('暂无收藏的 Workflow');
     } finally {
       await view.cleanup();
     }

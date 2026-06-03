@@ -76,6 +76,8 @@ export interface Session {
   messageCount?: number;
   /** Last terminal workflow run status, used by the history status indicator. */
   runStatus?: SessionRunStatus;
+  /** True when a workflow session is pinned into the Sidebar favorites tab. */
+  favorite?: boolean;
 }
 
 export interface PromptItem {

@@ -235,10 +235,12 @@ export interface IRMeta {
   /** Target adapter id, e.g. "claude-code". */
   adapter?: string;
   /**
-   * "Simple workflow" mode. When true the graph must stay a single `agent` node
-   * (no other nodes, no edges) for its entire lifetime — used for easy, one-shot
-   * questions. AI edits are constrained to a single node and hard-collapsed on
-   * commit. Set by simpleBlueprint(); ignored by emit/parse.
+   * "Simple workflow" mode. When true the graph must stay a single node (the
+   * lone `start` node created by simpleBlueprint(), which accumulates the user's
+   * inputs in params.userInputs) for its entire lifetime — used for easy,
+   * one-shot questions. The AI dock runs as a plain chat (no blueprint
+   * generation): input goes straight to the model and the graph never grows past
+   * that one node. Ignored by emit/parse.
    */
   simple?: boolean;
   gateway?: {

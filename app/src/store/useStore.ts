@@ -62,6 +62,7 @@ import {
   setActiveGatewaySelection as writeStoredGatewaySelection,
 } from '@/lib/gatewayConfig';
 import { maybeRunCcSwitchAutoImportOnFirstRun } from '@/lib/ccSwitchAutoImport';
+import { ensureFreeProxy, isFreeChannelSelection } from '@/lib/freeChannels';
 import {
   modelClassFromModelId,
   nodeParamsWithGatewayOverride,
@@ -117,6 +118,7 @@ import {
   localizePromptGroup,
   localizePromptItem,
   SUPPORTED_LOCALES,
+  t,
   type Locale,
   withPromptGroupLocale,
   withPromptItemLocale,
@@ -275,6 +277,13 @@ export interface StoreState {
    * `aiStreaming` as request/loading state only.
    */
   aiEditingSessions: WorkflowSessionKey[];
+  /**
+   * Session-bound simple-workflow CHAT turns in flight. Like aiEditingSessions
+   * they keep `aiStreaming` truthy and drive Sidebar live badges + delete
+   * protection, but they do NOT lock the workflow read-only (chatting is not
+   * blueprint editing), so consecutive chat messages aren't blocked.
+   */
+  chattingSessions: WorkflowSessionKey[];
 
   // Session / UI state
   sessions: Session[];
@@ -340,8 +349,16 @@ export interface StoreState {
   openWorkflowSession: (ir: IRGraph, path?: string) => void;
   /** Export the current workflow to a user-chosen file (.owf.json). */
   exportWorkflow: (title?: string) => void;
+  /** Export a workflow session from history to a user-chosen file. */
+  exportWorkflowSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    title?: string,
+  ) => void;
   /** Import a workflow from a file and open it in a fresh session. */
   importWorkflow: (title?: string) => void;
+  /** Import a workflow from a file into a specific workspace history bucket. */
+  importWorkflowToWorkspace: (workspaceId: string, title?: string) => void;
   setAdapter: (adapter: string) => void;
   setGlobalRunSelection: (selection: GatewaySelection) => void;
   /** Clear the composer model pin so it inherits the Settings-active provider. */
@@ -358,6 +375,11 @@ export interface StoreState {
     sessionId: string,
     workspaceId: string | null,
     name: string,
+  ) => Promise<void>;
+  setWorkflowFavoriteSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    favorite: boolean,
   ) => Promise<void>;
   sendPrompt: (text: string) => void;
   /**
@@ -461,7 +483,8 @@ type ComposerDraftState = Pick<
 type SessionLiveStatusState = Pick<
   StoreState,
   'runningSessions' | 'aiEditingSessions'
->;
+> &
+  Partial<Pick<StoreState, 'chattingSessions'>>;
 
 function activeWorkflowSessionKey(
   state: WorkflowSessionState,
@@ -557,6 +580,7 @@ export function sessionLiveStatus(
   state: SessionLiveStatusState,
 ): SessionLiveStatus {
   if (hasSessionKey(state.runningSessions, sessionKey)) return 'running';
+  if (hasSessionKey(state.chattingSessions ?? [], sessionKey)) return 'running';
   if (hasSessionKey(state.aiEditingSessions, sessionKey)) return 'aiEditing';
   return null;
 }
@@ -663,12 +687,16 @@ function makeSession(locale: Locale = DEFAULT_LOCALE): Session {
   const ts = Date.now();
   return {
     id: shortId('s'),
-    title: locale === 'en-US' ? 'New Session' : '新会话',
+    title: untitledSessionTitle(locale),
     createdAt: ts,
     updatedAt: ts,
     // New sessions default to chat-type; the first workflow touch flips this on.
     isWorkflow: false,
   };
+}
+
+function untitledSessionTitle(locale: Locale): string {
+  return t(locale, 'defaultBlueprint.untitledSession');
 }
 
 function historySessionRunStatus(
@@ -691,6 +719,7 @@ function sessionFromSummary(summary: SessionSummary): Session {
     preview: summary.preview,
     messageCount: summary.messageCount,
     ...(runStatus ? { runStatus } : {}),
+    ...(summary.favorite === true ? { favorite: true } : {}),
   };
 }
 
@@ -708,6 +737,7 @@ function summaryFromRecord(record: SessionRecord): SessionSummary {
     preview: last ? last.slice(0, 80) : undefined,
     messageCount: record.messages.length,
     ...(runStatus ? { runStatus } : {}),
+    ...(record.meta?.favorite === true ? { favorite: true } : {}),
   };
 }
 
@@ -1319,7 +1349,7 @@ async function createNewChatSession(): Promise<void> {
     workspaceId,
     isWorkflow: false,
     messages: [],
-    title: state.locale === 'en-US' ? 'New Session' : '新会话',
+    title: untitledSessionTitle(state.locale),
   });
   const session = sessionFromRecord(record);
   const workspaces = await historyStore.listWorkspaces();
@@ -1411,7 +1441,16 @@ async function createNewWorkflowSession(
   });
 }
 
-async function openWorkflowInSession(ir: IRGraph, path?: string): Promise<void> {
+interface OpenWorkflowSessionOptions {
+  workspaceId?: string | null;
+  forceNewSession?: boolean;
+}
+
+async function openWorkflowInSession(
+  ir: IRGraph,
+  path?: string,
+  options: OpenWorkflowSessionOptions = {},
+): Promise<void> {
   const state = useStore.getState();
   const workflow = restoreWorkflowRunSnapshot(
     migrateWorkflowGateway(ir, defaultComposer.model),
@@ -1421,7 +1460,7 @@ async function openWorkflowInSession(ir: IRGraph, path?: string): Promise<void> 
     workflow.meta.name ??
     (state.locale === 'en-US' ? 'Workflow' : '工作流');
 
-  if (!isWorkflowReadOnly(state)) {
+  if (!options.forceNewSession && !isWorkflowReadOnly(state)) {
     applyWorkflowEdit(
       'user',
       () => ({ workflow, ...runProgress }),
@@ -1431,7 +1470,7 @@ async function openWorkflowInSession(ir: IRGraph, path?: string): Promise<void> 
     return;
   }
 
-  const workspaceId = state.activeWorkspaceId;
+  const workspaceId = options.workspaceId ?? state.activeWorkspaceId;
   if (!state.historyReady || !workspaceId) {
     const createdAt = Date.now();
     const session: Session = {
@@ -1481,11 +1520,25 @@ async function openWorkflowInSession(ir: IRGraph, path?: string): Promise<void> 
     canvasViewport: null,
     mode: 'design',
     currentFilePath: path ?? null,
+    activeWorkspaceId: workspaceId,
     workspaces,
     sessions: sessionTree[workspaceId] ?? [session],
     sessionTree,
     activeSessionId: session.id,
     messages: [],
+    ...(() => {
+      const workspace = workspaces.find((item) => item.id === workspaceId);
+      if (!workspace) return {};
+      const composer = { ...s.composer, workspace: workspace.path };
+      const workspaceHistory = workspace.path
+        ? [
+            workspace.path,
+            ...s.workspaceHistory.filter((item) => item !== workspace.path),
+          ].slice(0, WORKSPACE_HISTORY_LIMIT)
+        : s.workspaceHistory;
+      if (workspace.path) saveComposer({ composer, workspaceHistory });
+      return { composer, workspaceHistory };
+    })(),
     ...composerDraftPatchForSession(s, {
       workspaceId,
       sessionId: session.id,
@@ -1494,6 +1547,43 @@ async function openWorkflowInSession(ir: IRGraph, path?: string): Promise<void> 
   await historyStore.patchConfig({
     lastActiveWorkspaceId: workspaceId,
     lastActiveSessionId: session.id,
+  });
+}
+
+async function exportWorkflowHistorySession(
+  sessionId: string,
+  workspaceId: string | null,
+  title?: string,
+): Promise<void> {
+  const state = useStore.getState();
+  const targetWorkspaceId = workspaceId ?? state.activeWorkspaceId ?? null;
+  const isActive =
+    state.activeSessionId === sessionId &&
+    state.activeWorkspaceId === targetWorkspaceId;
+  let workflow =
+    liveWorkflowForSession(targetWorkspaceId, sessionId) ??
+    (isActive ? state.workflow : null);
+
+  if (!workflow && state.historyReady && targetWorkspaceId) {
+    const record = await historyStore.getSession(targetWorkspaceId, sessionId);
+    if (record?.isWorkflow && record.workflow) {
+      workflow = restoreWorkflowRunSnapshot(record.workflow, record.meta);
+    }
+  }
+
+  if (!workflow) return;
+  await exportWorkflowToFile(workflow, title);
+}
+
+async function importWorkflowIntoWorkspace(
+  workspaceId: string,
+  title?: string,
+): Promise<void> {
+  const result = await importWorkflowFromFile(title);
+  if (!result) return;
+  await openWorkflowInSession(result.ir, result.path ?? undefined, {
+    workspaceId,
+    forceNewSession: true,
   });
 }
 
@@ -1854,6 +1944,71 @@ async function renameWorkflowHistorySession(
   }
 }
 
+async function setWorkflowFavoriteHistorySession(
+  sessionId: string,
+  workspaceId: string | null,
+  favorite: boolean,
+): Promise<void> {
+  const state = useStore.getState();
+  if (!workspaceId || !state.historyReady) {
+    const localSessions = workspaceId
+      ? state.sessionTree[workspaceId] ?? state.sessions
+      : state.sessions;
+    const target = localSessions.find((session) =>
+      sessionMatchesTarget(session, sessionId, workspaceId),
+    );
+    if (!target?.isWorkflow) {
+      throw new Error(`Workflow session not found: ${sessionId}`);
+    }
+
+    useStore.setState((s) => {
+      const update = (session: Session): Session =>
+        sessionMatchesTarget(session, sessionId, workspaceId)
+          ? { ...session, favorite }
+          : session;
+      return {
+        sessions: s.sessions.map(update),
+        sessionTree: workspaceId
+          ? {
+              ...s.sessionTree,
+              [workspaceId]: (s.sessionTree[workspaceId] ?? s.sessions).map(
+                update,
+              ),
+            }
+          : s.sessionTree,
+      };
+    });
+    return;
+  }
+
+  const record = await historyStore.getSession(workspaceId, sessionId);
+  if (!record?.isWorkflow) {
+    throw new Error(`Workflow session not found: ${workspaceId}/${sessionId}`);
+  }
+
+  const updated = await historyStore.updateSession(workspaceId, sessionId, {
+    meta: { favorite },
+    preserveUpdatedAt: true,
+  });
+  const updatedSession = sessionFromRecord(updated);
+
+  useStore.setState((s) => {
+    const update = (session: Session): Session =>
+      sessionMatchesTarget(session, sessionId, workspaceId)
+        ? updatedSession
+        : session;
+    return {
+      sessions: s.sessions.map(update),
+      sessionTree: s.sessionTree[workspaceId]
+        ? {
+            ...s.sessionTree,
+            [workspaceId]: s.sessionTree[workspaceId].map(update),
+          }
+        : s.sessionTree,
+    };
+  });
+}
+
 async function activateWorkspacePath(path: string): Promise<void> {
   const trimmed = path.trim();
   if (!trimmed) return;
@@ -2042,6 +2197,19 @@ function sessionMatchesTarget(
   return true;
 }
 
+function liveWorkflowForSession(
+  workspaceId: string | null,
+  sessionId: string | null,
+): IRGraph | null {
+  const run = getRunChannel(workspaceId, sessionId);
+  if (run) return run.workflow;
+
+  const aiEdit = getAiEditChannel(workspaceId, sessionId);
+  if (aiEdit) return aiEdit.workflow;
+
+  return getAiEditSnapshot(workspaceId, sessionId)?.workflow ?? null;
+}
+
 function renameWorkflowInLiveChannels(
   workspaceId: string | null,
   sessionId: string,
@@ -2100,8 +2268,13 @@ const seedAppearance = loadAppearance();
 // from a fresh default blueprint (start → agent → end). We deliberately do NOT
 // seed the demo sample here: that caused "new workflow" to flicker back to the
 // review-changes sample whenever the store module re-initialised (e.g. on HMR).
+// Cold-start seed: prefer the last local workflow, but never boot straight into
+// a "simple workflow" (chat) surface — the default view is the normal blueprint
+// editor. A simple workflow is only entered by creating one or opening its
+// session from history.
+const localSeed = loadLocalWorkflow();
 const seedWorkflow = migrateWorkflowGateway(
-  loadLocalWorkflow() ??
+  (localSeed && localSeed.meta?.simple !== true ? localSeed : null) ??
     defaultBlueprint(undefined, seedLocale),
   defaultComposer.model,
 );
@@ -2176,6 +2349,7 @@ export const useStore = create<StoreState>((set) => ({
   // AI: idle.
   aiStreaming: false,
   aiEditingSessions: [],
+  chattingSessions: [],
 
   // Seed session-domain state from the sample module so the dev UI renders
   // a populated session history, message stream, and prompt library.
@@ -2289,14 +2463,28 @@ export const useStore = create<StoreState>((set) => ({
     void exportWorkflowToFile(workflow, title).catch(() => {});
   },
 
+  exportWorkflowSession: (sessionId, workspaceId, title) => {
+    void exportWorkflowHistorySession(sessionId, workspaceId, title).catch(
+      () => {},
+    );
+  },
+
   // Import a workflow from a file and open it as a fresh session. Invalid /
   // cancelled picks are no-ops so the current canvas is never clobbered.
   importWorkflow: (title) => {
     void importWorkflowFromFile(title)
       .then((result) => {
-        if (result) void openWorkflowInSession(result.ir, result.path ?? undefined);
+        if (result) {
+          void openWorkflowInSession(result.ir, result.path ?? undefined, {
+            forceNewSession: true,
+          });
+        }
       })
       .catch(() => {});
+  },
+
+  importWorkflowToWorkspace: (workspaceId, title) => {
+    void importWorkflowIntoWorkspace(workspaceId, title).catch(() => {});
   },
 
   // Switch the target runtime adapter (Claude Code / Codex / Gemini). The
@@ -2375,6 +2563,9 @@ export const useStore = create<StoreState>((set) => ({
   renameWorkflowSession: (sessionId, workspaceId, name) =>
     renameWorkflowHistorySession(sessionId, workspaceId, name),
 
+  setWorkflowFavoriteSession: (sessionId, workspaceId, favorite) =>
+    setWorkflowFavoriteHistorySession(sessionId, workspaceId, favorite),
+
   // AI-driven graph edit (design mode only).
   //
   // Flow:
@@ -2433,6 +2624,7 @@ export const useStore = create<StoreState>((set) => ({
       sessionId: aiEditingSession.sessionId,
       workflow: promptUpdate.workflow,
       messages: [...state.messages, userMsg],
+      ...(promptUpdate.workflow.meta?.simple === true ? { chat: true } : {}),
     };
     addAiEditChannel(ch);
     if (aiEditViewActive(ch)) {
@@ -2621,7 +2813,13 @@ export const useStore = create<StoreState>((set) => ({
     let aiCliRoutePromise: Promise<Awaited<ReturnType<typeof resolveCliGatewayRoute>>> | null =
       null;
     const resolveAiCliRoute = () => {
-      aiCliRoutePromise ??= resolveCliGatewayRoute(gatewaySelection);
+      aiCliRoutePromise ??= (async () => {
+        // Free-channel AI edits route through the built-in local proxy; ensure
+        // it is up (latest keys/models) before resolving so the cached port is
+        // current. No-op on web.
+        if (isFreeChannelSelection(gatewaySelection)) await ensureFreeProxy();
+        return resolveCliGatewayRoute(gatewaySelection);
+      })();
       return aiCliRoutePromise;
     };
     const aiEditViaCliWithSpeed = async (
@@ -3034,13 +3232,28 @@ export const useStore = create<StoreState>((set) => ({
     if (simpleMode) {
       void (async () => {
         const chatSystem = `${SIMPLE_CHAT_SYSTEM}${languageAdaptationPrompt(state.locale)}`;
+        // Multi-turn context: the gateway/CLI takes a single string, so fold the
+        // prior conversation (text messages only, skipping system notices) into
+        // the prompt as a transcript, then the current question. Keeps a bounded
+        // tail so very long chats don't blow the context window.
+        const prior = state.messages
+          .filter((m) => m.role !== 'system' && m.text.trim())
+          .slice(-SIMPLE_CHAT_HISTORY_TURNS)
+          .map((m) => `${m.role === 'user' ? '用户' : '助手'}：${m.text.trim()}`);
+        const chatPrompt = prior.length
+          ? `以下是之前的对话，请结合上下文继续回答最后一个「用户」消息：\n\n${prior.join('\n\n')}\n\n用户：${trimmed}`
+          : trimmed;
+        // Respect the permission the user picked in the composer (read-only /
+        // ask-each-time / full), matching the other run paths instead of
+        // hard-coding 'full'.
+        const chatPermission = state.composer.permission || 'full';
         try {
           newBubble(withAiTiming('⟳ 生成中…'));
           let answer = '';
           if (useCli) {
             const cli = await resolveAiCliRoute();
-            answer = await aiEditViaCliWithSpeed(`${chatSystem}\n\n${trimmed}`, cli, {
-              permission: 'full',
+            answer = await aiEditViaCliWithSpeed(`${chatSystem}\n\n${chatPrompt}`, cli, {
+              permission: chatPermission,
               model: cli.model,
               cliCommand: cli.cliCommand,
               env: cli.env,
@@ -3050,7 +3263,7 @@ export const useStore = create<StoreState>((set) => ({
             let full = '';
             const returned = await completeDirectWithSpeed({
               system: chatSystem,
-              userContent: trimmed,
+              userContent: chatPrompt,
               onDelta: (chunk) => {
                 full += chunk;
                 setActive(withAiTiming(full) || '⟳ 生成中…');
@@ -3931,6 +4144,14 @@ interface AiEditChannel {
   sessionId: string | null;
   workflow: IRGraph;
   messages: Message[];
+  /**
+   * True for simple-workflow chat turns. Such turns reuse the AI-edit channel
+   * plumbing (message persistence, background completion, userInputs commit) but
+   * are NOT "blueprint editing": they surface as `chattingSessions` rather than
+   * `aiEditingSessions`, so they don't lock the (nonexistent) canvas as
+   * read-only. See sendPrompt's simpleMode branch.
+   */
+  chat?: boolean;
 }
 const activeAiEdits = new Map<string, AiEditChannel>();
 const aiEditSnapshots = new Map<string, AiEditChannel>();
@@ -4004,13 +4225,21 @@ function syncRunningSessions(): void {
 }
 
 function syncAiEditingSessions(): void {
-  const aiEditingSessions = activeAiEditChannels().map((ch) => ({
-    workspaceId: ch.workspaceId,
-    sessionId: ch.sessionId,
-  }));
+  const channels = activeAiEditChannels();
+  // Blueprint-editing channels lock the workflow as read-only; chat channels
+  // (simple-workflow turns) do not — they surface separately so consecutive
+  // chat messages aren't blocked by the read-only gate. Both keep aiStreaming
+  // truthy so the composer reflects "busy".
+  const aiEditingSessions = channels
+    .filter((ch) => !ch.chat)
+    .map((ch) => ({ workspaceId: ch.workspaceId, sessionId: ch.sessionId }));
+  const chattingSessions = channels
+    .filter((ch) => ch.chat)
+    .map((ch) => ({ workspaceId: ch.workspaceId, sessionId: ch.sessionId }));
   useStore.setState({
     aiEditingSessions,
-    aiStreaming: aiEditingSessions.length > 0,
+    chattingSessions,
+    aiStreaming: aiEditingSessions.length + chattingSessions.length > 0,
   });
 }
 
@@ -4314,6 +4543,10 @@ const pendingInteractionResolvers = new Map<
 
 /** Max times a single node may ask the user before we stop re-invoking it. */
 const MAX_INTERACTION_ROUNDS = 6;
+
+/** How many prior chat turns simple-workflow mode folds into the prompt for
+ *  multi-turn context (bounded so long chats don't overflow the model). */
+const SIMPLE_CHAT_HISTORY_TURNS = 20;
 
 /** How many times to force a blueprint-only retry when the model gives prose. */
 const MAX_BLUEPRINT_RETRIES = 2;
@@ -5004,6 +5237,13 @@ async function executeViaCliInterpreter(
   const launchSelection =
     ch.config.gatewaySelection ??
     workflowDefaultGatewaySelection(workflow, ch.config.model);
+  // Free-channel runs are routed through the built-in local proxy. Ensure it is
+  // up (and pointed at the latest keys/models) before the gateway route is
+  // resolved, so the freshly-cached port is used. No-op on web.
+  if (isFreeChannelSelection(launchSelection)) {
+    await ensureFreeProxy();
+    if (!stillRunning(ch)) return;
+  }
   if (!resolveDirectGatewayRoute(launchSelection)) {
     try {
       const cli = await resolveCliGatewayRoute(launchSelection);

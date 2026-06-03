@@ -1,5 +1,6 @@
 import type { IRGraph } from '@/core/ir';
 import type { RuntimeAdapterId } from '@/lib/adapters';
+import { freeChannelGatewayProviders } from '@/lib/freeChannels';
 import {
   DEFAULT_GATEWAY_SELECTION,
   type GatewayConfig,
@@ -293,7 +294,11 @@ function selectionFromProvider(provider: GatewayProvider): GatewaySelection {
 export function loadGatewayConfig(): GatewayConfig {
   const stored = readStoredGatewayConfig();
   const legacy = readLegacyProviders();
-  if (legacy.length === 0) return stored;
+  const free = freeChannelGatewayProviders();
+
+  if (legacy.length === 0) {
+    return { version: 1, providers: [...stored.providers, ...free] };
+  }
 
   const legacyIds = new Set(legacy.map((provider) => provider.id));
   const nonLegacy = stored.providers.filter(
@@ -301,7 +306,7 @@ export function loadGatewayConfig(): GatewayConfig {
   );
   return {
     version: 1,
-    providers: [...legacy.map(legacyProviderToGateway), ...nonLegacy],
+    providers: [...legacy.map(legacyProviderToGateway), ...nonLegacy, ...free],
   };
 }
 

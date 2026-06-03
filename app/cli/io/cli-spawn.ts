@@ -38,10 +38,35 @@ import {
   codexProgressLine,
   codexStatusSuccess,
   codexTurnCompletionStatus,
-  summarizeToolUse,
+  encodeToolPatch,
+  toolSubject,
 } from './stream';
 
 const IS_WINDOWS = process.platform === 'win32';
+
+/** Cap a tool result body so a huge file read doesn't bloat the message text. */
+const TOOL_RESULT_CLAMP = 4000;
+
+/**
+ * Flatten a Claude `tool_result.content` value (string, or an array of
+ * `{type:'text', text}` blocks) into a plain string for the structured event.
+ */
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b) => {
+        if (typeof b === 'string') return b;
+        if (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string') {
+          return (b as { text: string }).text;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  return '';
+}
 
 /** Default hard timeout (s) before the child is killed (mirrors lib.rs). */
 const DEFAULT_TIMEOUT_SECS = 1800;
@@ -288,6 +313,8 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
     let settled = false;
     let timedOutMessage: string | null = null;
     let cancelled = false;
+    // Per-call timing for structured tool events: tool_use_id → start epoch ms.
+    const toolStartedAt = new Map<string, number>();
 
     const finishReject = (msg: string) => {
       if (settled) return;
@@ -343,10 +370,42 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
         }
         const item = codexCompletedItem(v);
         if (item) {
-          const ln = codexProgressLine(item);
-          if (ln) {
-            acc += ln;
-            opts.onProgress?.(ln);
+          const itemType = typeof item.type === 'string' ? item.type : '';
+          if (itemType === 'agent_message') {
+            // Plain assistant prose — keep as text.
+            const ln = codexProgressLine(item);
+            if (ln) {
+              acc += ln;
+              opts.onProgress?.(ln);
+            }
+          } else if (itemType) {
+            // A completed tool/command item → one structured (done) event.
+            // codex items arrive already-complete with no start event, so we
+            // can't report a duration. We still register the id (used as a
+            // uniqueness counter for the fallback id below).
+            const id =
+              typeof item.id === 'string' ? item.id : `cx${toolStartedAt.size}`;
+            toolStartedAt.set(id, Date.now());
+            const subject = toolSubject(item);
+            const resultText =
+              typeof item.output === 'string'
+                ? item.output
+                : typeof item.text === 'string'
+                  ? item.text
+                  : '';
+            const isError =
+              typeof item.status === 'string' &&
+              /error|fail/i.test(item.status);
+            opts.onProgress?.(
+              encodeToolPatch({
+                id,
+                name: itemType,
+                subject,
+                status: isError ? 'error' : 'done',
+                result: resultText.slice(0, TOOL_RESULT_CLAMP),
+                truncated: resultText.length >= TOOL_RESULT_CLAMP,
+              }),
+            );
           }
         }
         return;
@@ -365,9 +424,46 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
               opts.onProgress?.(b.text);
             } else if (b.type === 'tool_use') {
               const name = typeof b.name === 'string' ? b.name : 'tool';
-              const ln = `\n${summarizeToolUse(name, b.input)}\n`;
-              opts.onProgress?.(ln);
+              const id = typeof b.id === 'string' ? b.id : `t${toolStartedAt.size}`;
+              toolStartedAt.set(id, Date.now());
+              // Structured sentinel (rich card) + legacy text line (fallback /
+              // raw transports). The render layer strips the sentinel.
+              const sentinel = encodeToolPatch({
+                id,
+                name,
+                subject: toolSubject(b.input),
+                args: b.input,
+                status: 'running',
+              });
+              opts.onProgress?.(sentinel);
             }
+          }
+        }
+      } else if (type === 'user') {
+        // tool_result blocks arrive on a `user` message, correlated by id.
+        const message = v.message as Record<string, unknown> | undefined;
+        const content = message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (typeof block !== 'object' || block === null) continue;
+            const b = block as Record<string, unknown>;
+            if (b.type !== 'tool_result') continue;
+            const id = typeof b.tool_use_id === 'string' ? b.tool_use_id : '';
+            if (!id) continue;
+            const startedAt = toolStartedAt.get(id);
+            const durationMs = startedAt != null ? Date.now() - startedAt : undefined;
+            const isError = b.is_error === true;
+            const resultText = toolResultText(b.content);
+            const truncated = resultText.length >= TOOL_RESULT_CLAMP;
+            opts.onProgress?.(
+              encodeToolPatch({
+                id,
+                status: isError ? 'error' : 'done',
+                durationMs,
+                result: resultText.slice(0, TOOL_RESULT_CLAMP),
+                truncated,
+              }),
+            );
           }
         }
       } else if (type === 'result') {

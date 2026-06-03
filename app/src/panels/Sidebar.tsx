@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { Search, X } from 'lucide-react';
+import { Download, Pencil, Search, Star, Trash2, Upload, X } from 'lucide-react';
 import StatusIndicator, { type StatusTone } from '@/components/StatusIndicator';
 import {
   sessionLiveStatus,
@@ -18,7 +18,7 @@ import SettingsModal from './SettingsModal';
 /**
  * CONTRACT: default export, no props. Left session rail.
  *
- * Top  : primary action — "+ New Workflow".
+ * Top  : primary actions — "+ New Session" and "+ New Workflow".
  * Bottom: session history list, sourced from the store; clicking switches the
  *         active session context.
  *
@@ -41,6 +41,7 @@ function formatTime(ts: number): string {
 
 const WORKFLOW_HISTORY_PAGE_SIZE = 10;
 const MAX_WORKFLOW_RENAME_LENGTH = 80;
+type SidebarTab = 'history' | 'favorites';
 
 function clampPercent(percent: number | null | undefined): number | null {
   if (percent == null || !Number.isFinite(percent)) return null;
@@ -128,6 +129,27 @@ function sessionMatchesSearch(
   );
 }
 
+function sessionVisibleInTab(session: Session, tab: SidebarTab): boolean {
+  return tab === 'history' || (session.isWorkflow && session.favorite === true);
+}
+
+function FavoriteMarker({
+  favorite,
+  locale,
+}: {
+  favorite: boolean;
+  locale: Locale;
+}) {
+  if (!favorite) return null;
+  return (
+    <Star
+      size={12}
+      aria-label={t(locale, 'sidebar.favoriteBadge')}
+      className="shrink-0 fill-accent text-accent"
+    />
+  );
+}
+
 export default function Sidebar() {
   const locale = useStore((s) => s.locale);
   const sessions = useStore((s) => s.sessions);
@@ -139,16 +161,22 @@ export default function Sidebar() {
   const runningSessions = useStore((s) => s.runningSessions);
   const runningSessionProgress = useStore((s) => s.runningSessionProgress);
   const aiEditingSessions = useStore((s) => s.aiEditingSessions);
+  const chattingSessions = useStore((s) => s.chattingSessions);
   const newWorkflow = useStore((s) => s.newWorkflow);
-  const newSimpleWorkflow = useStore((s) => s.newSimpleWorkflow);
-  const importWorkflow = useStore((s) => s.importWorkflow);
+  const newSession = useStore((s) => s.newSession);
+  const exportWorkflowSession = useStore((s) => s.exportWorkflowSession);
+  const importWorkflowToWorkspace = useStore((s) => s.importWorkflowToWorkspace);
   const selectSession = useStore((s) => s.selectSession);
   const deleteSession = useStore((s) => s.deleteSession);
   const renameWorkflowSession = useStore((s) => s.renameWorkflowSession);
+  const setWorkflowFavoriteSession = useStore(
+    (s) => s.setWorkflowFavoriteSession,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspaceLimits, setWorkspaceLimits] = useState<Record<string, number>>({});
   const [flatLimit, setFlatLimit] = useState(WORKFLOW_HISTORY_PAGE_SIZE);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<SidebarTab>('history');
 
   // ── Context menu for session deletion ────────────────────────────────────
   type MenuState =
@@ -160,9 +188,19 @@ export default function Sidebar() {
         workspaceId: string | null;
         title: string;
         isWorkflow: boolean;
+        simple: boolean;
+        favorite: boolean;
+      };
+  type WorkspaceMenuState =
+    | null
+    | {
+        x: number;
+        y: number;
+        workspaceId: string;
       };
 
   const [menu, setMenu] = useState<MenuState>(null);
+  const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState>(null);
   const [renaming, setRenaming] = useState<{
     sessionId: string;
     workspaceId: string | null;
@@ -185,10 +223,12 @@ export default function Sidebar() {
     return workflowDeleteProtectionReason(session, targetWorkspaceId, {
       runningSessions,
       aiEditingSessions,
+      chattingSessions,
     });
   }, [
     activeWorkspaceId,
     aiEditingSessions,
+    chattingSessions,
     menu,
     runningSessions,
     sessions,
@@ -202,6 +242,8 @@ export default function Sidebar() {
       workspaceId: string | null,
       title: string,
       isWorkflow: boolean,
+      simple: boolean,
+      favorite: boolean,
     ) => {
       event.preventDefault();
       event.stopPropagation();
@@ -215,7 +257,26 @@ export default function Sidebar() {
         workspaceId,
         title,
         isWorkflow,
+        simple,
+        favorite,
       });
+      setWorkspaceMenu(null);
+    },
+    [],
+  );
+
+  const onWorkspaceContextMenu = useCallback(
+    (event: React.MouseEvent, workspaceId: string) => {
+      event.preventDefault();
+      const aside = event.currentTarget.closest('aside');
+      if (!aside) return;
+      const rect = aside.getBoundingClientRect();
+      setWorkspaceMenu({
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+        workspaceId,
+      });
+      setMenu(null);
     },
     [],
   );
@@ -265,6 +326,35 @@ export default function Sidebar() {
     }
     setMenu(null);
   }, [menu, locale, deleteSession, renaming]);
+
+  const handleExport = useCallback(() => {
+    if (!menu?.isWorkflow || menu.simple) return;
+    exportWorkflowSession(
+      menu.sessionId,
+      menu.workspaceId,
+      t(locale, 'canvas.exportTitle'),
+    );
+    setMenu(null);
+  }, [exportWorkflowSession, locale, menu]);
+
+  const handleToggleFavorite = useCallback(() => {
+    if (!menu?.isWorkflow) return;
+    void setWorkflowFavoriteSession(
+      menu.sessionId,
+      menu.workspaceId,
+      !menu.favorite,
+    );
+    setMenu(null);
+  }, [menu, setWorkflowFavoriteSession]);
+
+  const handleImportToWorkspace = useCallback(() => {
+    if (!workspaceMenu) return;
+    importWorkflowToWorkspace(
+      workspaceMenu.workspaceId,
+      t(locale, 'sidebar.importWorkflowTitle'),
+    );
+    setWorkspaceMenu(null);
+  }, [importWorkflowToWorkspace, locale, workspaceMenu]);
 
   const handleStartRename = useCallback(() => {
     if (!menu?.isWorkflow) return;
@@ -383,10 +473,40 @@ export default function Sidebar() {
     [sessionTree, workspaces],
   );
 
+  const totalFavoriteTreeSessions = useMemo(
+    () =>
+      workspaces.reduce(
+        (count, workspace) =>
+          count +
+          (sessionTree[workspace.id]?.filter((session) =>
+            sessionVisibleInTab(session, 'favorites'),
+          ).length ?? 0),
+        0,
+      ),
+    [sessionTree, workspaces],
+  );
+
+  const tabFlatSessions = useMemo(
+    () =>
+      sessions.filter((session) => sessionVisibleInTab(session, activeTab)),
+    [activeTab, sessions],
+  );
+
   const hasHistory =
     workspaces.length > 0 ? totalTreeSessions > 0 : sessions.length > 0;
-  const showHistorySearch = !historyReady || hasHistory;
+  const hasFavorites =
+    workspaces.length > 0
+      ? totalFavoriteTreeSessions > 0
+      : sessions.some((session) => sessionVisibleInTab(session, 'favorites'));
+  const hasActiveTabSessions =
+    activeTab === 'favorites' ? hasFavorites : hasHistory;
+  const showHistorySearch =
+    !historyReady || hasActiveTabSessions || isSearching;
   const isHistoryEmpty = historyReady && !hasHistory;
+  const isFavoritesEmpty =
+    historyReady && activeTab === 'favorites' && !hasFavorites;
+  const isActiveTabEmpty =
+    activeTab === 'favorites' ? isFavoritesEmpty : isHistoryEmpty;
 
   useEffect(() => {
     if (isHistoryEmpty && searchQuery.length > 0) {
@@ -398,28 +518,35 @@ export default function Sidebar() {
     () =>
       workspaces
         .map((workspace) => {
-          const list = sessionTree[workspace.id] ?? [];
+          const tabSessions = (sessionTree[workspace.id] ?? []).filter(
+            (session) => sessionVisibleInTab(session, activeTab),
+          );
           return {
             workspace,
+            tabSessions,
             sessions: normalizedQuery
-              ? list.filter((session) =>
+              ? tabSessions.filter((session) =>
                   sessionMatchesSearch(session, workspace, normalizedQuery),
                 )
-              : list,
+              : tabSessions,
           };
         })
-        .filter((group) => !normalizedQuery || group.sessions.length > 0),
-    [normalizedQuery, sessionTree, workspaces],
+        .filter((group) => {
+          if (normalizedQuery) return group.sessions.length > 0;
+          if (activeTab === 'favorites') return group.tabSessions.length > 0;
+          return true;
+        }),
+    [activeTab, normalizedQuery, sessionTree, workspaces],
   );
 
   const filteredFlatSessions = useMemo(
     () =>
       normalizedQuery
-        ? sessions.filter((session) =>
+        ? tabFlatSessions.filter((session) =>
             sessionMatchesSearch(session, undefined, normalizedQuery),
           )
-        : sessions,
-    [normalizedQuery, sessions],
+        : tabFlatSessions,
+    [normalizedQuery, tabFlatSessions],
   );
 
   const totalMatchedSessions =
@@ -502,35 +629,55 @@ export default function Sidebar() {
       <div className="flex flex-col gap-2 px-3 pt-3 pb-2.5">
         <button
           type="button"
-          onClick={newWorkflow}
+          onClick={newSession}
           className="flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span className="text-base leading-none">＋</span>
-          {t(locale, 'sidebar.newWorkflow')}
+          {t(locale, 'sidebar.newSession')}
         </button>
         <button
           type="button"
-          onClick={newSimpleWorkflow}
+          onClick={newWorkflow}
           className="flex items-center gap-2 rounded-md border border-border bg-panel-2 px-3 py-2 text-sm font-medium text-fg-dim transition-colors hover:border-accent hover:bg-border-soft hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span className="text-base leading-none">＋</span>
-          {t(locale, 'sidebar.newSimpleWorkflow')}
-        </button>
-        <button
-          type="button"
-          onClick={() => importWorkflow(t(locale, 'sidebar.importWorkflowTitle'))}
-          title={t(locale, 'sidebar.importWorkflowTitle')}
-          className="flex items-center gap-2 rounded-md border border-border bg-panel-2 px-3 py-2 text-sm font-medium text-fg-dim transition-colors hover:border-accent hover:bg-border-soft hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <span className="text-base leading-none" aria-hidden>⤒</span>
-          {t(locale, 'sidebar.importWorkflow')}
+          {t(locale, 'sidebar.newWorkflow')}
         </button>
       </div>
 
       {/* Session history */}
       <div className="flex min-h-0 flex-1 flex-col px-2 pb-3">
-        <div className="px-2 pb-1.5 pt-0 text-[11px] font-medium uppercase tracking-wider text-fg-faint">
-          {t(locale, 'sidebar.history')}
+        <div className="px-2 pb-2 pt-0">
+          <div
+            role="tablist"
+            aria-label={t(locale, 'sidebar.historyTabs')}
+            className="grid grid-cols-2 rounded-md border border-border bg-bg p-0.5"
+          >
+            {(['history', 'favorites'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab}
+                onClick={() => setActiveTab(tab)}
+                className={
+                  'min-w-0 rounded px-2 py-1.5 text-xs font-medium transition-colors ' +
+                  (activeTab === tab
+                    ? 'bg-panel-2 text-fg shadow-sm'
+                    : 'text-fg-faint hover:bg-border-soft hover:text-fg-dim')
+                }
+              >
+                <span className="block truncate">
+                  {t(
+                    locale,
+                    tab === 'history'
+                      ? 'sidebar.history'
+                      : 'sidebar.favorites',
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
         {showHistorySearch && (
           <div className="px-2 pb-2">
@@ -584,13 +731,15 @@ export default function Sidebar() {
                 <span>{t(locale, 'sidebar.searchLoading')}</span>
               </div>
             </div>
-          ) : isHistoryEmpty ? (
+          ) : isActiveTabEmpty ? (
             <div
               role="status"
               aria-live="polite"
               className="px-2 py-3 text-xs text-fg-faint"
             >
-              {t(locale, 'sidebar.emptySessions')}
+              {activeTab === 'favorites'
+                ? t(locale, 'sidebar.emptyFavorites')
+                : t(locale, 'sidebar.emptySessions')}
             </div>
           ) : isSearching && totalMatchedSessions === 0 ? (
             <div
@@ -614,8 +763,8 @@ export default function Sidebar() {
             </div>
           ) : workspaces.length > 0 ? (
             <ul className="flex flex-col gap-2">
-              {filteredWorkspaces.map(({ workspace, sessions: list }) => {
-                const fullList = sessionTree[workspace.id] ?? [];
+              {filteredWorkspaces.map(({ workspace, sessions: list, tabSessions }) => {
+                const fullList = tabSessions;
                 const visibleList = isSearching
                   ? list
                   : list.slice(
@@ -625,14 +774,21 @@ export default function Sidebar() {
                     );
                 return (
                   <li key={workspace.id} className="flex flex-col gap-1">
-                    <div className="px-2 py-1">
+                    <div
+                      className="px-2 py-1"
+                      onContextMenu={(e) =>
+                        onWorkspaceContextMenu(e, workspace.id)
+                      }
+                    >
                       <div className="flex items-center gap-1.5 text-[11px] font-medium text-fg">
                         <span className="text-accent-2">▾</span>
                         <span className="min-w-0 flex-1 truncate" title={workspace.path}>
                           {workspace.name}
                         </span>
                         <span className="font-mono text-[10px] text-fg-faint">
-                          {workspace.sessionCount}
+                          {activeTab === 'favorites'
+                            ? fullList.length
+                            : workspace.sessionCount}
                         </span>
                       </div>
                       {workspace.path && (
@@ -657,7 +813,7 @@ export default function Sidebar() {
                           };
                           const liveStatus = sessionLiveStatus(
                             sessionKey,
-                            { runningSessions, aiEditingSessions },
+                            { runningSessions, aiEditingSessions, chattingSessions },
                           );
                           const status = historyStatusTone(session, liveStatus);
                           const runProgress =
@@ -681,6 +837,8 @@ export default function Sidebar() {
                                       workspace.id,
                                       session.title,
                                       session.isWorkflow,
+                                      session.simple === true,
+                                      session.favorite === true,
                                     )
                                   }
                                   className={
@@ -784,6 +942,8 @@ export default function Sidebar() {
                                       workspace.id,
                                       session.title,
                                       session.isWorkflow,
+                                      session.simple === true,
+                                      session.favorite === true,
                                     )
                                   }
                                   className={
@@ -811,8 +971,14 @@ export default function Sidebar() {
                                           : 'WF'
                                         : 'CHAT'}
                                     </span>
-                                    <span className="min-w-0 flex-1 truncate text-sm">
-                                      {session.title}
+                                    <span className="flex min-w-0 flex-1 items-center gap-1">
+                                      <FavoriteMarker
+                                        favorite={session.favorite === true}
+                                        locale={locale}
+                                      />
+                                      <span className="min-w-0 flex-1 truncate text-sm">
+                                        {session.title}
+                                      </span>
                                     </span>
                                     <StatusIndicator
                                       label={statusLabel}
@@ -861,7 +1027,7 @@ export default function Sidebar() {
                   const sessionKey = { workspaceId: null, sessionId: session.id };
                   const liveStatus = sessionLiveStatus(
                     sessionKey,
-                    { runningSessions, aiEditingSessions },
+                    { runningSessions, aiEditingSessions, chattingSessions },
                   );
                   const status = historyStatusTone(session, liveStatus);
                   const runProgress =
@@ -885,6 +1051,8 @@ export default function Sidebar() {
                             null,
                             session.title,
                             session.isWorkflow,
+                            session.simple === true,
+                            session.favorite === true,
                           )
                         }
                         className={
@@ -969,6 +1137,8 @@ export default function Sidebar() {
                             null,
                             session.title,
                             session.isWorkflow,
+                            session.simple === true,
+                            session.favorite === true,
                           )
                         }
                         className={
@@ -988,8 +1158,14 @@ export default function Sidebar() {
                           >
                             ●
                           </span>
-                          <span className="min-w-0 flex-1 truncate text-sm">
-                            {session.title}
+                          <span className="flex min-w-0 flex-1 items-center gap-1">
+                            <FavoriteMarker
+                              favorite={session.favorite === true}
+                              locale={locale}
+                            />
+                            <span className="min-w-0 flex-1 truncate text-sm">
+                              {session.title}
+                            </span>
                           </span>
                           <StatusIndicator label={statusLabel} tone={status} />
                         </span>
@@ -1038,15 +1214,45 @@ export default function Sidebar() {
           x={menu.x}
           y={menu.y}
           locale={locale}
+          canFavorite={menu.isWorkflow}
+          isFavorite={menu.favorite}
           canRename={menu.isWorkflow}
+          canExportWorkflow={menu.isWorkflow && !menu.simple}
           deleteDisabledReason={deleteProtectionLabel(
             locale,
             menuDeleteProtectionReason,
           )}
+          onToggleFavorite={handleToggleFavorite}
           onRename={handleStartRename}
+          onExport={handleExport}
           onDelete={handleDelete}
           onClose={() => setMenu(null)}
         />
+      )}
+      {workspaceMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onClick={() => setWorkspaceMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setWorkspaceMenu(null);
+            }}
+          />
+          <div
+            className="absolute z-40 min-w-[160px] overflow-hidden rounded-md border border-border bg-panel shadow-2xl"
+            style={{ left: workspaceMenu.x, top: workspaceMenu.y }}
+          >
+            <button
+              type="button"
+              onClick={handleImportToWorkspace}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg"
+            >
+              <Upload size={13} className="text-fg-faint" />
+              <span>{t(locale, 'sidebar.importWorkflow')}</span>
+            </button>
+          </div>
+        </>
       )}
     </aside>
   );
@@ -1060,18 +1266,28 @@ function SessionContextMenu({
   x,
   y,
   locale,
+  canFavorite,
+  isFavorite,
   canRename,
+  canExportWorkflow,
   deleteDisabledReason,
+  onToggleFavorite,
   onRename,
+  onExport,
   onDelete,
   onClose,
 }: {
   x: number;
   y: number;
   locale: Locale;
+  canFavorite: boolean;
+  isFavorite: boolean;
   canRename: boolean;
+  canExportWorkflow: boolean;
   deleteDisabledReason: string | null;
+  onToggleFavorite: () => void;
   onRename: () => void;
+  onExport: () => void;
   onDelete: () => void;
   onClose: () => void;
 }) {
@@ -1090,14 +1306,48 @@ function SessionContextMenu({
         className="absolute z-40 min-w-[140px] overflow-hidden rounded-md border border-border bg-panel shadow-2xl"
         style={{ left: x, top: y }}
       >
+        {canFavorite && (
+          <button
+            type="button"
+            onClick={onToggleFavorite}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg"
+          >
+            <Star
+              size={13}
+              className={
+                isFavorite
+                  ? 'fill-accent text-accent'
+                  : 'text-fg-faint'
+              }
+            />
+            <span>
+              {t(
+                locale,
+                isFavorite
+                  ? 'sidebar.unfavoriteSession'
+                  : 'sidebar.favoriteSession',
+              )}
+            </span>
+          </button>
+        )}
         {canRename && (
           <button
             type="button"
             onClick={onRename}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg"
           >
-            <span className="text-fg-faint">✎</span>
+            <Pencil size={13} className="text-fg-faint" />
             <span>{t(locale, 'sidebar.renameSession')}</span>
+          </button>
+        )}
+        {canExportWorkflow && (
+          <button
+            type="button"
+            onClick={onExport}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg"
+          >
+            <Download size={13} className="text-fg-faint" />
+            <span>{t(locale, 'canvas.exportTitle')}</span>
           </button>
         )}
         <button
@@ -1107,7 +1357,7 @@ function SessionContextMenu({
           onClick={onDelete}
           className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-fg-dim"
         >
-          <span className="text-fg-faint">🗑</span>
+          <Trash2 size={13} className="text-fg-faint" />
           <span>{t(locale, 'sidebar.deleteSession')}</span>
         </button>
       </div>

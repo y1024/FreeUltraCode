@@ -15,6 +15,10 @@ import {
   isCliAdapterAvailable,
 } from '@/lib/cliConfig';
 import {
+  FREE_CHANNEL_PROVIDER_PREFIX,
+  freeChannelReady,
+} from '@/lib/freeChannels';
+import {
   getDefaultGatewaySelection,
   getExplicitActiveGatewaySelection,
   listGatewayProviders,
@@ -615,7 +619,20 @@ function gatewayChannelAvailable(
     return apiKey.length > 0 && isProviderBaseUrlValid(baseUrl);
   }
   if (transport === 'cli') {
-    return isCliAdapterAvailable(provider.adapter, getCliRuntimeSnapshot());
+    if (!isCliAdapterAvailable(provider.adapter, getCliRuntimeSnapshot())) {
+      return false;
+    }
+    // freecc:* synthetic providers reuse the claude-code CLI transport but
+    // carry only a placeholder apiKey ('freecc'); their real upstream key lives
+    // in localStorage. Gate them on freeChannelReady so a channel with no key
+    // (or a local channel) is only "available" when it can actually be reached
+    // through the proxy — otherwise the run 404s with no clear remediation.
+    if (provider.id.startsWith(FREE_CHANNEL_PROVIDER_PREFIX)) {
+      return freeChannelReady(
+        provider.id.slice(FREE_CHANNEL_PROVIDER_PREFIX.length),
+      );
+    }
+    return true;
   }
   return false;
 }

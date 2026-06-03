@@ -107,9 +107,11 @@ describe('spawnCliAgent (claude stream-json)', () => {
     expect(argv).toContain('--model');
     expect(argv[argv.indexOf('--model') + 1]).toBe('sonnet');
 
-    // tool_use surfaced as a breadcrumb; assistant text streamed via onProgress.
+    // tool_use surfaced as a structured tool sentinel; assistant text streamed.
     const joined = progress.join('');
-    expect(joined).toContain('🔧 Read: src/ir.ts');
+    expect(joined).toContain('<<OWF_TOOL>>');
+    expect(joined).toContain('"name":"Read"');
+    expect(joined).toContain('"subject":"src/ir.ts"');
     expect(joined).toContain('PROMPT[hello-prompt]');
     expect(joined).toContain(' more');
   });

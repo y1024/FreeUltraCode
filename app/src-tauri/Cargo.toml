@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.13"
+version = "0.2.0"
 description = "OpenWorkflows - Visual AI Workflow Editor"
 authors = ["OpenWorkflows"]
 license = ""
@@ -30,7 +30,9 @@ tauri = { version = "2.11.2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-opener = "2"
 ureq = { version = "2", features = ["json", "tls"] }
+tiny_http = "0.12"
 rusqlite = { version = "0.31", features = ["bundled"] }
 toml = "0.8"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

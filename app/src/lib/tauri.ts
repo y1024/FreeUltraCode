@@ -202,6 +202,34 @@ export async function aiEditViaCli(
   }
 }
 
+/**
+ * Start (or update) the built-in local free-channel proxy. Sends every ready
+ * channel's upstream config; the Rust side binds 127.0.0.1 on a stable port and
+ * returns it. Idempotent. Desktop-only — callers should guard with isTauri().
+ */
+export async function freeProxyEnsure(
+  channels: Array<{
+    id: string;
+    transport: string;
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  }>,
+): Promise<{ port: number }> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<{ port: number }>('free_proxy_ensure', { channels });
+}
+
+/** Stop the built-in local free-channel proxy. No-op outside the desktop shell. */
+export async function freeProxyStop(): Promise<void> {
+  if (!tauriAvailable()) return;
+  const invoke = await getInvoke();
+  await invoke('free_proxy_stop');
+}
+
 /** Open an external URL via the OS default browser (web: new tab). */
 export async function openExternal(url: string): Promise<void> {
   if (!tauriAvailable()) {
@@ -344,4 +372,82 @@ export async function onWorkflowNode(
   return listen<WorkflowNodeEvent>('workflow-node', (event) =>
     cb(event.payload),
   );
+}
+
+/**
+ * Open a local file (or reveal it) in the OS default handler via the Tauri
+ * opener plugin. Used by AI-message file chips. Resolves silently with `false`
+ * outside the desktop shell or on failure, so the UI can degrade gracefully.
+ *
+ * Relative paths are resolved against `cwd` when provided (typically the run's
+ * workspace folder). Line/column hints are accepted but only used when the OS
+ * handler understands them (most editors ignore them via `open`).
+ *
+ * TRUST NOTE: the path here originates from AI output. `openPath` launches the
+ * OS default handler, which for executable types (.exe/.bat/.ps1/.lnk/…) means
+ * running a program. We therefore require an explicit user confirmation before
+ * opening anything with an executable extension; everything else (source,
+ * config, docs) opens directly. `reveal` (show in folder) is always safe.
+ */
+const EXECUTABLE_EXT = new Set([
+  'exe', 'bat', 'cmd', 'com', 'ps1', 'psm1', 'vbs', 'js', 'jse', 'wsf', 'wsh',
+  'scr', 'msi', 'msp', 'reg', 'lnk', 'url', 'inf', 'cpl', 'jar', 'app',
+  'command', 'desktop', 'sh', 'bash', 'zsh', 'fish', 'run', 'bin', 'appimage',
+]);
+
+function executableExtensionOf(p: string): string | null {
+  const base = p.replace(/[\\/]+$/, '').split(/[:#?]/, 1)[0];
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const ext = base.slice(dot + 1).toLowerCase();
+  return EXECUTABLE_EXT.has(ext) ? ext : null;
+}
+
+export async function openLocalPath(
+  path: string,
+  opts?: { cwd?: string; reveal?: boolean },
+): Promise<boolean> {
+  if (!tauriAvailable()) return false;
+  try {
+    const resolved = await resolveAgainstCwd(path, opts?.cwd);
+    const reveal = opts?.reveal === true;
+
+    // Guard one-click execution of AI-supplied executables. Reveal-in-folder is
+    // never an execution, so it skips the prompt.
+    if (!reveal) {
+      const ext = executableExtensionOf(resolved);
+      if (ext) {
+        const ok =
+          typeof window !== 'undefined' &&
+          window.confirm(
+            `即将用系统默认程序打开一个可执行文件（.${ext}）：\n${resolved}\n\n该路径来自 AI 输出，打开可能会运行程序。确定继续？`,
+          );
+        if (!ok) return false;
+      }
+    }
+
+    const { openPath, revealItemInDir } = await import(
+      '@tauri-apps/plugin-opener'
+    );
+    if (reveal) await revealItemInDir(resolved);
+    else await openPath(resolved);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Join a relative path onto cwd using the Tauri path API; absolute paths pass through. */
+async function resolveAgainstCwd(path: string, cwd?: string): Promise<string> {
+  // Absolute: drive-letter (C:\), POSIX root (/), UNC (\\server), or a home/env
+  // prefix the user clearly means literally (~/, $HOME/…).
+  const isAbsolute =
+    /^(?:[A-Za-z]:[/\\]|[/\\]|\\\\|~[/\\]|\$\w+[/\\])/.test(path);
+  if (isAbsolute || !cwd) return path;
+  try {
+    const { join } = await import('@tauri-apps/api/path');
+    return await join(cwd, path);
+  } catch {
+    return path;
+  }
 }

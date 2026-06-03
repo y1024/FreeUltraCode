@@ -1,0 +1,116 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Backdrop: deep blueprint gradient -->
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1a2030"/>
+      <stop offset="0.5" stop-color="#11151f"/>
+      <stop offset="1" stop-color="#0a0d14"/>
+    </linearGradient>
+    <!-- Central orchestrator glow -->
+    <radialGradient id="coreGlow" cx="0.5" cy="0.46" r="0.62">
+      <stop offset="0" stop-color="#7c8cff" stop-opacity="0.28"/>
+      <stop offset="0.45" stop-color="#7c8cff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#7c8cff" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="execGrad" x1="256" y1="120" x2="256" y2="262" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9aa6ff"/>
+      <stop offset="1" stop-color="#6f7ff5"/>
+    </linearGradient>
+    <linearGradient id="dataGrad" x1="256" y1="262" x2="256" y2="404" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4be0c4"/>
+      <stop offset="1" stop-color="#2bb89c"/>
+    </linearGradient>
+
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+
+    <!-- node radial fills -->
+    <radialGradient id="nodeIndigo" cx="0.4" cy="0.35" r="0.85">
+      <stop offset="0" stop-color="#aab4ff"/>
+      <stop offset="0.55" stop-color="#7c8cff"/>
+      <stop offset="1" stop-color="#5563d8"/>
+    </radialGradient>
+    <radialGradient id="nodeTeal" cx="0.4" cy="0.35" r="0.85">
+      <stop offset="0" stop-color="#6ef0d6"/>
+      <stop offset="0.55" stop-color="#37c2a8"/>
+      <stop offset="1" stop-color="#1f9a83"/>
+    </radialGradient>
+    <radialGradient id="nodeAmber" cx="0.4" cy="0.35" r="0.85">
+      <stop offset="0" stop-color="#ffd166"/>
+      <stop offset="0.55" stop-color="#e3a008"/>
+      <stop offset="1" stop-color="#b87d05"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ===== background plate (rounded squircle) ===== -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#coreGlow)"/>
+
+  <!-- faint blueprint grid -->
+  <g stroke="#7c8cff" stroke-opacity="0.05" stroke-width="1.5">
+    <path d="M128 64 V448 M256 64 V448 M384 64 V448"/>
+    <path d="M64 160 H448 M64 256 H448 M64 352 H448"/>
+  </g>
+  <!-- grid intersection dots -->
+  <g fill="#7c8cff" fill-opacity="0.07">
+    <circle cx="128" cy="160" r="2.4"/><circle cx="384" cy="160" r="2.4"/>
+    <circle cx="128" cy="352" r="2.4"/><circle cx="384" cy="352" r="2.4"/>
+  </g>
+
+  <!-- inner border for definition -->
+  <rect x="16.5" y="16.5" width="479" height="479" rx="111.5" fill="none" stroke="#7c8cff" stroke-opacity="0.16" stroke-width="2"/>
+
+  <!-- ===== EDGES ===== -->
+  <!-- glow underlay -->
+  <g filter="url(#softGlow)" fill="none" stroke-linecap="round">
+    <path d="M256 120 L120 262 M256 120 L256 262 M256 120 L392 262" stroke="#7c8cff" stroke-opacity="0.45" stroke-width="9"/>
+    <path d="M120 262 L256 404 M256 262 L256 404 M392 262 L256 404" stroke="#37c2a8" stroke-opacity="0.4" stroke-width="8"/>
+  </g>
+  <!-- fan-out: exec (indigo) -->
+  <path d="M256 120 L120 262 M256 120 L256 262 M256 120 L392 262"
+        stroke="url(#execGrad)" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <!-- fan-in: data (teal) -->
+  <path d="M120 262 L256 404 M256 262 L256 404 M392 262 L256 404"
+        stroke="url(#dataGrad)" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+
+  <!-- midpoint flow ticks (direction cue) -->
+  <g fill="#cdd4ff" fill-opacity="0.9">
+    <circle cx="188" cy="191" r="3.2"/><circle cx="256" cy="191" r="3.2"/><circle cx="324" cy="191" r="3.2"/>
+  </g>
+  <g fill="#a7f0e0" fill-opacity="0.85">
+    <circle cx="188" cy="333" r="2.8"/><circle cx="256" cy="333" r="2.8"/><circle cx="324" cy="333" r="2.8"/>
+  </g>
+
+  <!-- ===== NODES ===== -->
+  <!-- three parallel agents -->
+  <g filter="url(#glow)">
+    <circle cx="120" cy="262" r="27" fill="#0c1018" stroke="url(#nodeTeal)" stroke-width="6"/>
+    <circle cx="256" cy="262" r="27" fill="#0c1018" stroke="url(#nodeIndigo)" stroke-width="6"/>
+    <circle cx="392" cy="262" r="27" fill="#0c1018" stroke="url(#nodeAmber)" stroke-width="6"/>
+  </g>
+  <circle cx="120" cy="262" r="9" fill="url(#nodeTeal)"/>
+  <circle cx="256" cy="262" r="9" fill="url(#nodeIndigo)"/>
+  <circle cx="392" cy="262" r="9" fill="url(#nodeAmber)"/>
+
+  <!-- source orchestrator (top) with play / run glyph -->
+  <g filter="url(#glow)">
+    <circle cx="256" cy="120" r="36" fill="#0c1018" stroke="url(#nodeIndigo)" stroke-width="7"/>
+  </g>
+  <path d="M245 103 L245 137 L274 120 Z" fill="url(#nodeIndigo)"/>
+
+  <!-- converge node (bottom / result) -->
+  <g filter="url(#glow)">
+    <circle cx="256" cy="404" r="36" fill="#0c1018" stroke="url(#nodeTeal)" stroke-width="7"/>
+  </g>
+  <circle cx="256" cy="404" r="11" fill="url(#nodeTeal)"/>
+  <circle cx="256" cy="404" r="20" fill="none" stroke="#37c2a8" stroke-opacity="0.5" stroke-width="2.5"/>
+</svg>

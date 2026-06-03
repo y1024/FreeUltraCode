@@ -63,6 +63,33 @@ export function summarizeToolUse(name: string, input: unknown): string {
   return detail ? `🔧 ${name}: ${detail}` : `🔧 ${name}`;
 }
 
+/** Extract a one-line subject (command/path/pattern) from a tool input object. */
+export function toolSubject(input: unknown): string {
+  const keys = ['command', 'pattern', 'file_path', 'path', 'query', 'url', 'description'];
+  const obj =
+    typeof input === 'object' && input !== null
+      ? (input as Record<string, unknown>)
+      : null;
+  if (obj) {
+    for (const k of keys) {
+      const v = obj[k];
+      if (typeof v === 'string' && v.trim()) {
+        return v.trim().replace(/[\r\n]/g, ' ').slice(0, 200);
+      }
+    }
+  }
+  return '';
+}
+
+// Inline tool-event sentinel protocol (mirrors src/components/ai/lib/toolEvent.ts).
+const TOOL_OPEN = '<<OWF_TOOL>>';
+const TOOL_CLOSE = '<<OWF_TOOL_END>>';
+
+/** Serialise a tool-event patch into an inline sentinel block for the stream. */
+export function encodeToolPatch(patch: Record<string, unknown>): string {
+  return `\n${TOOL_OPEN}${JSON.stringify(patch)}${TOOL_CLOSE}\n`;
+}
+
 /** The method/type discriminator of a codex JSONL event. */
 function codexEventKind(event: Record<string, unknown>): string | undefined {
   const method = event.method;

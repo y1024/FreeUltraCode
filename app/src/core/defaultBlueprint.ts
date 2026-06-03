@@ -126,7 +126,7 @@ export function simpleBlueprint(
 ): IRGraph {
   const localeCode: Locale = locale ?? DEFAULT_LOCALE;
   const workflowName =
-    name ?? t(localeCode, 'defaultBlueprint.untitledWorkflow');
+    name ?? t(localeCode, 'defaultBlueprint.untitledSession');
   return normalizeWorkflowNodeNumbers({
     version: 1,
     meta: {

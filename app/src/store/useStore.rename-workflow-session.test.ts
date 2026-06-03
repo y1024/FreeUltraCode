@@ -93,4 +93,57 @@ describe('renameWorkflowSession', () => {
         ?.title,
     ).toBe('Renamed workflow');
   });
+
+  it('persists workflow favorite state in history summaries', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    const workflow = defaultBlueprint('Favorite workflow');
+    const record = await historyStore.createSession({
+      workspaceId: workspace.id,
+      isWorkflow: true,
+      title: workflow.meta.name,
+      workflow,
+    });
+    const session: Session = {
+      id: record.id,
+      workspaceId: workspace.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      isWorkflow: true,
+      messageCount: 0,
+    };
+
+    useStore.setState({
+      historyReady: true,
+      workspaces: [workspace],
+      sessions: [session],
+      sessionTree: { [workspace.id]: [session] },
+      activeWorkspaceId: workspace.id,
+      activeSessionId: record.id,
+      workflow: cloneGraph(workflow),
+      currentFilePath: null,
+    });
+
+    await useStore
+      .getState()
+      .setWorkflowFavoriteSession(record.id, workspace.id, true);
+
+    const updatedRecord = await historyStore.getSession(workspace.id, record.id);
+    const updatedIndex = await historyStore.listSessions(workspace.id);
+    const state = useStore.getState();
+
+    expect(updatedRecord?.meta?.favorite).toBe(true);
+    expect(updatedIndex.find((item) => item.id === record.id)?.favorite).toBe(
+      true,
+    );
+    expect(state.sessions.find((item) => item.id === record.id)?.favorite).toBe(
+      true,
+    );
+    expect(
+      state.sessionTree[workspace.id]?.find((item) => item.id === record.id)
+        ?.favorite,
+    ).toBe(true);
+  });
 });

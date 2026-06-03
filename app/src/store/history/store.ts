@@ -220,6 +220,17 @@ function preview(messages: Message[]): string | undefined {
 const AUTO_TITLE_PLACEHOLDERS = new Set([
   '新会话',
   'New Session',
+  '未命名会话',
+  'Untitled Session',
+  'Sesion sin titulo',
+  'Session sans titre',
+  'Безымянная сессия',
+  'جلسة بلا عنوان',
+  'शीर्षक रहित सत्र',
+  '無題のセッション',
+  'Sessao sem titulo',
+  'Unbenannte Sitzung',
+  '제목 없는 세션',
   '新建工作流',
   'New Workflow',
   '未命名工作流',
@@ -234,13 +245,13 @@ export function isAutoTitlePlaceholder(title?: string | null): boolean {
   return !compact || AUTO_TITLE_PLACEHOLDERS.has(compact);
 }
 
-export function titleFromText(text: string, fallback = '新会话'): string {
+export function titleFromText(text: string, fallback = '未命名会话'): string {
   const compact = text.trim().replace(/\s+/g, ' ');
   if (!compact) return fallback;
   return compact.length > 36 ? `${compact.slice(0, 36)}...` : compact;
 }
 
-function titleFromMessages(messages: Message[], fallback = '新会话'): string {
+function titleFromMessages(messages: Message[], fallback = '未命名会话'): string {
   const user = messages.find((m) => m.role === 'user' && m.text.trim());
   if (!user) return fallback;
   return titleFromText(user.text, fallback);
@@ -270,6 +281,7 @@ function sessionSummary(record: SessionRecord): SessionSummary {
     messageCount: record.messages.length,
     ...(record.workflow?.meta?.simple ? { simple: true } : {}),
     ...(runStatus ? { runStatus } : {}),
+    ...(record.meta?.favorite === true ? { favorite: true } : {}),
   };
 }
 
@@ -447,7 +459,7 @@ async function updateSessionInternal(
     ...current,
     title: patch.title ?? current.title,
     isWorkflow: nextIsWorkflow,
-    updatedAt: now(),
+    updatedAt: patch.preserveUpdatedAt ? current.updatedAt : now(),
     messages,
     ...(nextIsWorkflow
       ? { workflow: patch.workflow ?? current.workflow }

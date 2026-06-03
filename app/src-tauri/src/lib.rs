@@ -6,6 +6,7 @@ use tauri::Emitter;
 
 mod cc_switch_import;
 mod cli_runtime;
+mod free_proxy;
 mod history;
 
 /// Windows CreateProcess flag: don't allocate a console window for the child.
@@ -671,6 +672,9 @@ fn emit_progress(app: &tauri::AppHandle, run_id: &str, text: &str) {
 /// Summarize a `tool_use` event into one readable progress line, e.g.
 /// `🔧 Bash: ls app/src` / `🔧 Glob: **/*.tsx` / `🔧 Read: app/src/core/ir.ts`,
 /// so the run log shows *what* the agent is doing, not just the tool name.
+/// Retained as a fallback / for the codex text path; the claude path now emits
+/// structured `<<OWF_TOOL>>` sentinels instead.
+#[allow(dead_code)]
 fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     // Prefer the most informative known field; fall back to compact JSON.
     let detail = [
@@ -712,10 +716,39 @@ fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     }
 }
 
+/// Extract a one-line subject (command/path/pattern) from a tool input object.
+fn tool_subject(input: &serde_json::Value) -> String {
+    let s = [
+        "command", "pattern", "file_path", "path", "query", "url", "description",
+    ]
+    .iter()
+    .find_map(|k| {
+        input
+            .get(*k)
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    })
+    .unwrap_or_default();
+    let s: String = s.replace(['\n', '\r'], " ");
+    s.chars().take(200).collect()
+}
+
+/// Serialise a structured tool-event patch into an inline sentinel block that
+/// the frontend render layer decodes (mirrors src/components/ai/lib/toolEvent.ts).
+fn encode_tool_patch(patch: &serde_json::Value) -> String {
+    format!("\n<<OWF_TOOL>>{}<<OWF_TOOL_END>>\n", patch)
+}
+
+/// Cap a tool result body so a huge file read doesn't bloat the message text.
+const TOOL_RESULT_CLAMP: usize = 4000;
+
 /// Summarize a `tool_result` block (the `user`-role event that carries a tool's
 /// output) into one short, single-line breadcrumb, e.g. `app/src/core/ir.ts …`.
 /// `content` may be a bare string or an array of `{type:"text",text}` blocks.
 /// Returns an empty string when there is nothing useful to show.
+#[allow(dead_code)]
 fn summarize_tool_result(block: &serde_json::Value) -> String {
     let raw = match block.get("content") {
         Some(serde_json::Value::String(s)) => s.clone(),
@@ -735,6 +768,22 @@ fn summarize_tool_result(block: &serde_json::Value) -> String {
         format!("⚠ {truncated}")
     } else {
         truncated
+    }
+}
+
+/// Flatten a Claude `tool_result.content` (string or `[{type:text,text}]`) into
+/// a plain multi-line string for the structured tool event. Unlike
+/// {@link summarize_tool_result} this keeps newlines and does NOT clamp or add a
+/// `⚠` prefix — the renderer shows the error state from the event `status`.
+fn tool_result_raw(block: &serde_json::Value) -> String {
+    match block.get("content") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
     }
 }
 
@@ -1209,22 +1258,34 @@ async fn ai_cli(
                                                 .get("input")
                                                 .cloned()
                                                 .unwrap_or(serde_json::Value::Null);
-                                            if let Some(id) =
-                                                block.get("id").and_then(|t| t.as_str())
-                                            {
-                                                tool_starts.insert(
-                                                    id.to_string(),
-                                                    std::time::Instant::now(),
-                                                );
-                                            }
+                                            let id = block
+                                                .get("id")
+                                                .and_then(|t| t.as_str())
+                                                .map(|s| s.to_string())
+                                                .unwrap_or_else(|| {
+                                                    format!("t{}", tool_starts.len())
+                                                });
+                                            tool_starts.insert(
+                                                id.clone(),
+                                                std::time::Instant::now(),
+                                            );
                                             prev_kind = "";
+                                            // Structured sentinel for the rich card.
+                                            // Omit `args` when there is no input
+                                            // so the card shows no empty JSON panel.
+                                            let mut patch = serde_json::json!({
+                                                "id": id,
+                                                "name": name,
+                                                "subject": tool_subject(&input),
+                                                "status": "running",
+                                            });
+                                            if !input.is_null() {
+                                                patch["args"] = input;
+                                            }
                                             emit_progress(
                                                 &app2,
                                                 &run2,
-                                                &format!(
-                                                    "\n{}\n",
-                                                    summarize_tool_use(name, &input)
-                                                ),
+                                                &encode_tool_patch(&patch),
                                             );
                                         }
                                         _ => {}
@@ -1245,24 +1306,34 @@ async fn ai_cli(
                                     {
                                         continue;
                                     }
-                                    let dur = block
+                                    let id = block
                                         .get("tool_use_id")
                                         .and_then(|t| t.as_str())
-                                        .and_then(|id| tool_starts.remove(id))
-                                        .map(|start| start.elapsed().as_secs());
-                                    let head = match dur {
-                                        Some(s) => format!("✓ 工具完成（{s}s）"),
-                                        None => "✓ 工具完成".to_string(),
-                                    };
-                                    let summary = summarize_tool_result(block);
+                                        .unwrap_or("");
+                                    let dur_ms = tool_starts
+                                        .remove(id)
+                                        .map(|start| start.elapsed().as_millis() as u64);
+                                    let is_error = block
+                                        .get("is_error")
+                                        .and_then(|t| t.as_bool())
+                                        .unwrap_or(false);
+                                    let raw = tool_result_raw(block);
+                                    let truncated = raw.chars().count() > TOOL_RESULT_CLAMP;
+                                    let result_body: String =
+                                        raw.chars().take(TOOL_RESULT_CLAMP).collect();
                                     prev_kind = "";
-                                    if summary.is_empty() {
-                                        emit_progress(&app2, &run2, &format!("{head}\n"));
-                                    } else {
+                                    if !id.is_empty() {
+                                        let patch = serde_json::json!({
+                                            "id": id,
+                                            "status": if is_error { "error" } else { "done" },
+                                            "durationMs": dur_ms,
+                                            "result": result_body,
+                                            "truncated": truncated,
+                                        });
                                         emit_progress(
                                             &app2,
                                             &run2,
-                                            &format!("{head}: {summary}\n"),
+                                            &encode_tool_patch(&patch),
                                         );
                                     }
                                 }
@@ -1538,6 +1609,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -1562,7 +1634,9 @@ pub fn run() {
             history::history_write_json,
             history::history_remove,
             history::history_list_dir,
-            cc_switch_import::import_cc_switch_claude
+            cc_switch_import::import_cc_switch_claude,
+            free_proxy::free_proxy_ensure,
+            free_proxy::free_proxy_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

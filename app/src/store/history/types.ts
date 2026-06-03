@@ -241,7 +241,7 @@ export type WorkspaceSummary = Pick<
 export interface SessionRecord {
   id: string;
   workspaceId: string;
-  /** Display title - default = first user message[0..36], else '新会话'. */
+  /** Display title - default = first user message[0..36], else '未命名会话'. */
   title: string;
   /** True = workflow session (carries an IRGraph snapshot); false = chat-only. */
   isWorkflow: boolean;
@@ -265,6 +265,7 @@ export interface SessionMeta extends HistoryMetadata {
   adapter?: RuntimeAdapterId;
   permission?: string;
   model?: string;
+  favorite?: boolean;
   canvasViewport?: CanvasViewport | null;
   runStatus?: 'idle' | 'running' | 'success' | 'error' | 'interrupted';
   runState?: Record<string, IRRunStatus>;
@@ -340,6 +341,8 @@ export type SessionSummary = Pick<
   messageCount: number;
   /** Derived from meta.runStatus for lightweight history status badges. */
   runStatus?: SessionMeta['runStatus'];
+  /** Derived from meta.favorite for lightweight favorite-tab rendering. */
+  favorite?: boolean;
 
   // Forward-compatible canonical fields.
   sessionId?: SessionId;
@@ -398,6 +401,8 @@ export interface SessionPatch {
   workflow?: IRGraph;
   meta?: Partial<SessionMeta>;
   metadata?: HistoryMetadata;
+  /** Preserve history ordering for metadata-only updates such as favorites. */
+  preserveUpdatedAt?: boolean;
   /** Whole-replace messages (rare - prefer appendMessage). */
   messages?: Message[];
 }

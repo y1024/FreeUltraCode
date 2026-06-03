@@ -60,6 +60,11 @@
   --owf-status-slot-size: 20px;
   --owf-status-indicator-size: 14px;
   --owf-status-spinner-ring: 2px;
+  --owf-composer-chat-border: color-mix(
+    in oklab,
+    var(--border) 68%,
+    var(--fg-faint)
+  );
 
   /* ── Canvas redesign: glass surface ─────────────────────────────────────── */
   --node-glass: color-mix(in oklab, var(--panel) 96%, transparent);
@@ -239,6 +244,11 @@ html.owf-style-daylight {
     transparent 0%,
     rgba(15, 23, 42, 0.05) 100%
   );
+  --owf-composer-chat-border: color-mix(
+    in oklab,
+    var(--border) 76%,
+    var(--panel)
+  );
 }
 
 html[data-owf-style='ember'],
@@ -309,6 +319,24 @@ pre,
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--fg-faint);
+}
+
+.owf-ai-input {
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.owf-ai-input--chat {
+  border-color: var(--owf-composer-chat-border);
+}
+
+.owf-ai-input--drop {
+  background: color-mix(in oklab, var(--accent) 5%, var(--bg));
+  border-color: var(--accent);
+}
+
+.owf-ai-input:focus {
+  border-color: var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -463,3 +491,212 @@ pre,
     transition: none;
   }
 }
+
+/* ── AI message stream: markdown + code + reasoning rendering ─────────────── */
+:root {
+  /* Syntax-highlight token colors (GitHub-dark-ish, overridable by themes). */
+  --hl-comment: #8b949e;
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6ff;
+  --hl-number: #79c0ff;
+  --hl-func: #d2a8ff;
+  --hl-type: #ffa657;
+  --hl-attr: #7ee787;
+  --hl-deletion: #ffa198;
+  --hl-addition: #7ee787;
+  /* Diff-fence line backgrounds. */
+  --diff-add-bg: color-mix(in oklab, #3fb950 16%, transparent);
+  --diff-del-bg: color-mix(in oklab, #f85149 16%, transparent);
+  /* Code-block chrome surfaces, derived from theme tokens. */
+  --code-bg: color-mix(in oklab, var(--bg) 86%, #000 14%);
+  --code-header-bg: color-mix(in oklab, var(--panel-2) 70%, var(--bg));
+  --code-border: var(--border);
+}
+
+/* Prose blocks. Tight vertical rhythm to suit a chat surface. */
+.ai-markdown > :first-child { margin-top: 0; }
+.ai-markdown > :last-child { margin-bottom: 0; }
+.ai-markdown p { margin: 0.5em 0; }
+.ai-markdown h1,
+.ai-markdown h2,
+.ai-markdown h3,
+.ai-markdown h4 {
+  margin: 1em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--fg);
+}
+.ai-markdown h1 { font-size: 1.3em; }
+.ai-markdown h2 { font-size: 1.18em; }
+.ai-markdown h3 { font-size: 1.06em; }
+.ai-markdown h4 { font-size: 1em; }
+.ai-markdown ul,
+.ai-markdown ol { margin: 0.5em 0; padding-left: 1.4em; }
+.ai-markdown ul { list-style: disc; }
+.ai-markdown ol { list-style: decimal; }
+.ai-markdown li { margin: 0.2em 0; }
+.ai-markdown li::marker { color: var(--fg-faint); }
+.ai-markdown li > input[type='checkbox'] { margin-right: 0.4em; }
+.ai-markdown a { color: var(--accent); }
+.ai-markdown strong { color: var(--fg); font-weight: 600; }
+.ai-markdown em { font-style: italic; }
+.ai-markdown hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.ai-markdown blockquote {
+  margin: 0.6em 0;
+  padding: 0.1em 0.9em;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  color: var(--fg-dim);
+  border-radius: 0 6px 6px 0;
+}
+
+/* Tables (remark-gfm). */
+.ai-table { border-collapse: collapse; }
+.ai-table th,
+.ai-table td {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.7em;
+  text-align: left;
+  vertical-align: top;
+}
+.ai-table th {
+  background: var(--code-header-bg);
+  font-weight: 600;
+  color: var(--fg);
+}
+.ai-table tr:nth-child(even) td {
+  background: color-mix(in oklab, var(--bg) 50%, var(--panel));
+}
+
+/* Fenced code block body. */
+.ai-code__scroll pre { margin: 0; }
+.ai-code__scroll code {
+  display: block;
+  padding: 0.75rem 0.9rem;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  white-space: pre;
+  tab-size: 2;
+}
+.ai-code--wrap code { white-space: pre-wrap; word-break: break-word; }
+
+/* highlight.js token classes → theme vars (no stock hljs stylesheet imported). */
+.hljs { color: var(--fg); background: transparent; }
+.hljs-comment,
+.hljs-quote { color: var(--hl-comment); font-style: italic; }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag { color: var(--hl-keyword); }
+.hljs-string,
+.hljs-title.class_,
+.hljs-template-string,
+.hljs-regexp { color: var(--hl-string); }
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-symbol,
+.hljs-bullet { color: var(--hl-number); }
+.hljs-title,
+.hljs-section,
+.hljs-title.function_ { color: var(--hl-func); }
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-params { color: var(--hl-type); }
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id { color: var(--hl-attr); }
+.hljs-meta { color: var(--hl-comment); }
+.hljs-deletion { color: var(--hl-deletion); }
+.hljs-addition { color: var(--hl-addition); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
+/* Streaming reasoning header shimmer. */
+.ai-reasoning__live {
+  background: linear-gradient(
+    90deg,
+    var(--fg-faint),
+    color-mix(in oklab, var(--accent) 70%, var(--fg)),
+    var(--fg-faint)
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ai-reasoning-shimmer 1.6s linear infinite;
+}
+@keyframes ai-reasoning-shimmer {
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-reasoning__live { animation: none; color: var(--fg-faint); }
+  .ai-reasoning__body { transition: none; }
+}
+
+/* Streaming caret shown before any text arrives. */
+.ai-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: ai-caret-blink 1s step-end infinite;
+}
+@keyframes ai-caret-blink {
+  50% { opacity: 0; }
+}
+
+/* Trailing typewriter caret that follows the last streamed answer. */
+.ai-caret--trailing {
+  width: 0.45em;
+  height: 1.05em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+}
+
+/* Diff-fence per-line tinting. highlight.js marks added/removed lines with
+   .hljs-addition / .hljs-deletion; render them as full-width line bands. */
+.ai-code--diff code .hljs-addition {
+  display: block;
+  margin: 0 -0.9rem;
+  padding: 0 0.9rem;
+  background: var(--diff-add-bg);
+}
+.ai-code--diff code .hljs-deletion {
+  display: block;
+  margin: 0 -0.9rem;
+  padding: 0 0.9rem;
+  background: var(--diff-del-bg);
+}
+
+/* GitHub-style callout body: tighten the inner markdown rhythm. */
+.ai-callout__body > .ai-markdown > :first-child,
+.ai-callout__body > :first-child { margin-top: 0; }
+.ai-callout__body > .ai-markdown > :last-child,
+.ai-callout__body > :last-child { margin-bottom: 0; }
+
+/* Reasoning body now renders markdown; keep it compact + faint. */
+.ai-reasoning__inner .ai-markdown { font-size: 0.95em; }
+.ai-reasoning__inner .ai-markdown > :first-child { margin-top: 0; }
+.ai-reasoning__inner .ai-markdown > :last-child { margin-bottom: 0; }
+
+/* KaTeX: keep block math from overflowing the bubble; allow horizontal scroll. */
+.ai-markdown .katex-display {
+  margin: 0.6em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+.ai-markdown .katex { font-size: 1.02em; }
+
+/* Tool card: subtle hover lift. */
+.ai-tool-card { transition: border-color 0.12s, background 0.12s; }
+.ai-tool-card:hover { border-color: color-mix(in oklab, var(--accent) 30%, var(--border-soft)); }

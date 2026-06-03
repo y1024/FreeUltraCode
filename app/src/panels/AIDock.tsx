@@ -16,6 +16,16 @@ import {
   workflowGatewaySelection,
 } from '@/lib/modelGateway/resolver';
 import { RUNTIME_ADAPTERS } from '@/lib/adapters';
+import {
+  FREE_CHANNELS,
+  ensureFreeProxy,
+  freeChannelById,
+  freeChannelReady,
+  freeChannelSelection,
+  getFreeChannelKey,
+  isFreeChannelSelection,
+  setFreeChannelKey,
+} from '@/lib/freeChannels';
 import type { ModelStrategy, SelectOption } from '@/store/types';
 import { localizeSelectOption, t, type Locale } from '@/lib/i18n';
 import type { Message } from '@/store/types';
@@ -26,12 +36,20 @@ import {
   savePaneWidth,
 } from '@/lib/composerStorage';
 import { shouldRefocusComposerAfterAppend } from '@/lib/composerEntryPolicy';
-import { tauriAvailable } from '@/lib/tauri';
+import { tauriAvailable, openLocalPath } from '@/lib/tauri';
+import MessageContent from '@/components/ai/MessageContent';
+import type { FileRef } from '@/components/ai/lib/filePath';
+import {
+  extractToolSentinels,
+  hasToolSentinel,
+} from '@/components/ai/lib/toolEvent';
 import { shallow } from 'zustand/shallow';
 import { isActiveAiEditingSession, useStore } from '@/store/useStore';
 
 const DEFAULT_DOCK_HEIGHT = 208; // matches the former h-52
 const MIN_DOCK_HEIGHT = 120;
+/** Fixed height of the bottom input area in 'chat' layout (return fills the rest). */
+const CHAT_INPUT_HEIGHT = 232;
 
 /** localStorage key + bounds for the AI-input pane width (right column). */
 const INPUT_WIDTH_KEY = 'openworkflow.aiInputWidth.v1';
@@ -40,6 +58,20 @@ const MIN_INPUT_WIDTH = 280;
 const MIN_RETURN_WIDTH = 240; // keep the AI-return pane usable
 const NARROW_INPUT_MIN_WIDTH = 120;
 const NARROW_INPUT_WIDTH_RATIO = 0.4;
+
+/** localStorage key + bounds for the bottom input area height in 'chat' layout. */
+const CHAT_INPUT_HEIGHT_KEY = 'openworkflow.chatInputHeight.v1';
+const MIN_CHAT_INPUT_HEIGHT = 140;
+const MIN_CHAT_RETURN_HEIGHT = 160; // keep the chat return area usable
+
+/** Clamp the chat input-area height so neither it nor the return area collapses. */
+function clampChatInputHeight(h: number): number {
+  const max =
+    typeof window !== 'undefined'
+      ? Math.max(MIN_CHAT_INPUT_HEIGHT, window.innerHeight - MIN_CHAT_RETURN_HEIGHT)
+      : 480;
+  return Math.min(Math.max(h, MIN_CHAT_INPUT_HEIGHT), max);
+}
 
 function clampHeight(h: number): number {
   const max =
@@ -68,6 +100,15 @@ function normalizeSearchQuery(value: string): string {
   return value.trim().toLowerCase();
 }
 
+/**
+ * Strip inline tool sentinels (`<<OWF_TOOL>>…`) from a message's text so the
+ * search index and the search-active plain-text fallback never see/show raw
+ * protocol JSON that the rich renderer would otherwise turn into tool cards.
+ */
+function cleanMessageText(text: string): string {
+  return hasToolSentinel(text) ? extractToolSentinels(text).text : text;
+}
+
 function interactionSearchText(message: Message): string {
   if (!message.interaction) return '';
   const parts = [message.interaction.prompt];
@@ -88,8 +129,9 @@ function buildSearchMatches(messages: Message[], query: string): SearchMatch[] {
 
   for (const message of messages) {
     const segments: Array<{ source: SearchMatchSource; text: string }> = [];
-    if (message.text.trim()) {
-      segments.push({ source: 'text', text: message.text });
+    const cleaned = cleanMessageText(message.text);
+    if (cleaned.trim()) {
+      segments.push({ source: 'text', text: cleaned });
     }
     const interactionText = interactionSearchText(message);
     if (interactionText) {
@@ -426,10 +468,36 @@ function InteractionWidget({
  * so neither pane collapses.
  *
  * Mirrors design.html §06 "中 · 主工作区" bottom row (AI 返回 / AI 输入).
+ *
+ * `layout`:
+ *   - 'dock' (default): the bottom dock described above — horizontal split,
+ *     top-edge height resize, vertical width-resize divider.
+ *   - 'chat': a full-height vertical chat surface used by simple workflows —
+ *     AI return on top (fills the height), AI input pinned below. No canvas,
+ *     no resize handles; reuses the exact same return/input JSX.
  */
-export default function AIDock() {
+export default function AIDock({
+  layout = 'dock',
+}: {
+  layout?: 'dock' | 'chat';
+} = {}) {
+  const isChat = layout === 'chat';
   const messages = useStore((s) => s.messages);
   const sendPrompt = useStore((s) => s.sendPrompt);
+  // Chat layout shows the workflow/session title in place of the search bar.
+  const chatTitle = useStore((s) => s.workflow.meta?.name ?? '');
+  const simpleMode = useStore((s) => s.workflow.meta?.simple === true);
+  const activeSessionIsWorkflow = useStore((s) => {
+    if (!s.activeSessionId) return true;
+    const active =
+      s.sessions.find((session) => session.id === s.activeSessionId) ??
+      (s.activeWorkspaceId
+        ? s.sessionTree[s.activeWorkspaceId]?.find(
+            (session) => session.id === s.activeSessionId,
+          )
+        : undefined);
+    return active?.isWorkflow ?? true;
+  });
   const runSelection = useStore((s) => workflowGatewaySelection(s.workflow), shallow);
   const setGlobalRunSelection = useStore((s) => s.setGlobalRunSelection);
   const composer = useStore((s) => s.composer);
@@ -488,6 +556,72 @@ export default function AIDock() {
     RUNTIME_ADAPTERS.find((adapter) => adapter.id === runSelection.adapter)?.id ??
     RUNTIME_ADAPTERS[0].id;
 
+  // "Channel" select — only shown when the selected runtime is claude-code.
+  // Option 1 = system default (no proxy), options 2..n = the free channels
+  // routed through the built-in local proxy. See lib/freeChannels.ts.
+  const isClaudeCodeRuntime = runtimeSelectValue === 'claude-code';
+  const channelSelectOptions = useMemo<SelectOption[]>(
+    () => [
+      { id: '__system__', label: t(locale, 'dock.channelSystemDefault') },
+      ...FREE_CHANNELS.map((c) => ({
+        id: c.id,
+        label:
+          'Free · ' +
+          c.label +
+          (c.needsKey && !freeChannelReady(c.id) ? ' ⚠' : ''),
+      })),
+    ],
+    [locale],
+  );
+  const channelSelectValue =
+    isFreeChannelSelection(runSelection) ?? '__system__';
+  const onChannelChange = useCallback(
+    (id: string) => {
+      if (id === '__system__') {
+        setGlobalRunSelection(systemDefaultGatewaySelection('claude-code'));
+        return;
+      }
+      const channel = freeChannelById(id);
+      if (!channel) return;
+      if (channel.needsKey && !getFreeChannelKey(id)) {
+        const promptMsg =
+          'Enter API key for ' +
+          channel.label +
+          (channel.credentialUrl ? ' (' + channel.credentialUrl + ')' : '');
+        const k = window.prompt(promptMsg);
+        if (!k || !k.trim()) return;
+        setFreeChannelKey(id, k.trim());
+      }
+      void ensureFreeProxy();
+      setGlobalRunSelection(
+        freeChannelSelection(id, runSelection.modelClass),
+      );
+    },
+    [runSelection.modelClass, setGlobalRunSelection],
+  );
+
+  // Open a local file referenced by an AI-message chip in the OS handler. Paths
+  // resolve against the active workspace folder; no-ops gracefully in browser.
+  const workspaceCwd = composer.workspace;
+  const onOpenFile = useCallback(
+    (ref: FileRef) => {
+      if (!tauriAvailable()) return;
+      void openLocalPath(ref.path, { cwd: workspaceCwd || undefined });
+    },
+    [workspaceCwd],
+  );
+
+  // Heuristic "live bubble": the last assistant message is streaming while the
+  // AI is editing or a run is in flight. Drives streaming-safe markdown repair
+  // and in-progress reasoning rendering.
+  const lastAssistantId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') return messages[i].id;
+    }
+    return null;
+  }, [messages]);
+  const aiBusy = mode === 'running' || activeAiEditing;
+
   const modelStrategyOptions = useMemo<SelectOption[]>(
     () => [
       { id: 'inherit', label: t(locale, 'dock.modelStrategy.inherit') },
@@ -508,6 +642,11 @@ export default function AIDock() {
     () => loadPaneWidth(INPUT_WIDTH_KEY) ?? DEFAULT_INPUT_WIDTH,
   );
   const [renderedInputWidth, setRenderedInputWidth] = useState(inputWidth);
+  // Height (px) of the bottom AI-input area in 'chat' layout. The AI-return area
+  // above fills the remaining space, so dragging the divider re-splits the chat.
+  const [chatInputHeight, setChatInputHeight] = useState<number>(
+    () => loadPaneWidth(CHAT_INPUT_HEIGHT_KEY) ?? CHAT_INPUT_HEIGHT,
+  );
   const dockRef = useRef<HTMLDivElement>(null);
 
   const setActiveSearchMatchNode = useCallback((node: HTMLElement | null) => {
@@ -539,26 +678,6 @@ export default function AIDock() {
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
-
-  useEffect(() => {
-    if (
-      runSelection.systemDefault &&
-      !runSelection.providerId &&
-      !runSelection.channelId
-    ) {
-      return;
-    }
-    setGlobalRunSelection(
-      systemDefaultGatewaySelection(runSelection.adapter),
-    );
-  }, [
-    runSelection.adapter,
-    runSelection.channelId,
-    runSelection.modelClass,
-    runSelection.providerId,
-    runSelection.systemDefault,
-    setGlobalRunSelection,
-  ]);
 
   const rememberSelection = useCallback(
     (target: HTMLTextAreaElement | null = inputRef.current) => {
@@ -824,6 +943,38 @@ export default function AIDock() {
     [renderedInputWidth, clampInputWidth],
   );
 
+  // Drag the horizontal divider between the AI-return (top) and AI-input
+  // (bottom) areas in 'chat' layout. Dragging down (larger clientY) shrinks the
+  // input area; dragging up grows it.
+  const onChatSplitStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = chatInputHeight;
+      const prevUserSelect = document.body.style.userSelect;
+      const prevCursor = document.body.style.cursor;
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'row-resize';
+
+      const onMove = (ev: MouseEvent) => {
+        setChatInputHeight(clampChatInputHeight(startHeight - (ev.clientY - startY)));
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        document.body.style.userSelect = prevUserSelect;
+        document.body.style.cursor = prevCursor;
+        setChatInputHeight((h) => {
+          savePaneWidth(CHAT_INPUT_HEIGHT_KEY, h);
+          return h;
+        });
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    },
+    [chatInputHeight],
+  );
+
   const submit = () => {
     if (isReadOnly || activeAiEditing) return;
     const text = draft.trim();
@@ -844,30 +995,48 @@ export default function AIDock() {
   return (
     <div
       ref={dockRef}
-      className="relative flex shrink-0 border-t border-border bg-panel"
-      style={{ height }}
+      className={
+        'relative ' +
+        (isChat
+          ? 'flex h-full min-h-0 flex-col bg-bg'
+          : 'flex shrink-0 border-t border-border bg-panel')
+      }
+      style={isChat ? undefined : { height }}
     >
-      {/* Resize handle — sits on the top edge, cursor becomes row-resize. */}
-      <div
-        onMouseDown={onResizeStart}
-        title={t(locale, 'common.resizeHeight')}
-        className="group absolute -top-1 left-0 right-0 z-20 flex h-2 cursor-row-resize items-center justify-center"
-      >
-        <div className="h-0.5 w-full bg-transparent transition-colors group-hover:bg-accent/40" />
-      </div>
+      {/* Resize handle — sits on the top edge, cursor becomes row-resize.
+          Hidden in chat layout (the surface fills its parent). */}
+      {!isChat && (
+        <div
+          onMouseDown={onResizeStart}
+          title={t(locale, 'common.resizeHeight')}
+          className="group absolute -top-1 left-0 right-0 z-20 flex h-2 cursor-row-resize items-center justify-center"
+        >
+          <div className="h-0.5 w-full bg-transparent transition-colors group-hover:bg-accent/40" />
+        </div>
+      )}
       {/* AI return stream */}
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center gap-2 border-b border-border-soft px-3 py-2">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
-            {t(locale, 'dock.aiReturn')}
-          </span>
+          {isChat ? (
+            <span
+              className="min-w-0 flex-1 truncate text-sm font-medium text-fg"
+              title={chatTitle}
+            >
+              {chatTitle || t(locale, 'dock.aiReturn')}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
+              {t(locale, 'dock.aiReturn')}
+            </span>
+          )}
           {activeAiEditing && (
             <span className="flex items-center gap-1 font-mono text-[10px] text-accent-2">
               <span className="omc-pulse-dot" />
               {t(locale, 'dock.generating')}
             </span>
           )}
-          <div className="flex min-w-0 flex-1 basis-full flex-wrap items-center justify-end gap-1 sm:ml-auto sm:basis-0 sm:flex-nowrap">
+          {!isChat && (
+            <div className="flex min-w-0 flex-1 basis-full flex-wrap items-center justify-end gap-1 sm:ml-auto sm:basis-0 sm:flex-nowrap">
             <div className="flex min-w-0 flex-1 basis-full items-center gap-1 rounded-md border border-border bg-bg px-2 py-1 transition-colors focus-within:border-accent sm:basis-auto">
               <Search size={13} className="shrink-0 text-fg-faint" />
               <input
@@ -940,6 +1109,7 @@ export default function AIDock() {
                 : ''}
             </span>
           </div>
+          )}
         </header>
         <div ref={streamRef} className="min-h-0 flex-1 overflow-y-auto p-3">
           {messages.length === 0 ? (
@@ -1005,16 +1175,28 @@ export default function AIDock() {
                         onAnswer={(answer) => answerInteraction(m.id, answer)}
                         onDismiss={() => dismissInteraction(m.id)}
                       />
-                    ) : (
+                    ) : isUser || normalizedSearch ? (
+                      // User turns stay plain text; while a return search is
+                      // active we fall back to the plain highlighter for every
+                      // message so match marks land on real text nodes.
                       <span className="whitespace-pre-wrap text-sm leading-relaxed text-fg-dim">
                         {renderHighlightedText(
-                          m.text,
+                          isUser ? m.text : cleanMessageText(m.text),
                           m.id,
                           normalizedSearch,
                           activeSearchMatchId,
                           setActiveSearchMatchNode,
                         )}
                       </span>
+                    ) : (
+                      // Assistant / system: rich markdown, code, tables, file
+                      // chips, links, and collapsible reasoning blocks.
+                      <MessageContent
+                        text={m.text}
+                        streaming={aiBusy && m.id === lastAssistantId}
+                        showActions={!isSystem}
+                        onOpenFile={onOpenFile}
+                      />
                     )}
                   </li>
                 );
@@ -1024,19 +1206,35 @@ export default function AIDock() {
         </div>
       </section>
 
-      {/* Vertical divider — drag to re-split AI 返回 / AI 输入. */}
-      <div
-        onMouseDown={onSplitStart}
-        title={t(locale, 'common.resizeSplit')}
-        className="group relative z-20 flex w-1.5 shrink-0 cursor-col-resize items-stretch justify-center border-l border-border-soft"
-      >
-        <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/40" />
-      </div>
+      {/* Vertical divider — drag to re-split AI 返回 / AI 输入.
+          Hidden in chat layout (input is stacked below, full width). */}
+      {!isChat && (
+        <div
+          onMouseDown={onSplitStart}
+          title={t(locale, 'common.resizeSplit')}
+          className="group relative z-20 flex w-1.5 shrink-0 cursor-col-resize items-stretch justify-center border-l border-border-soft"
+        >
+          <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/40" />
+        </div>
+      )}
 
-      {/* AI input box */}
+      {/* Horizontal divider (chat layout only) — drag to re-split AI 返回 (top) /
+          AI 输入 (bottom). */}
+      {isChat && (
+        <div
+          onMouseDown={onChatSplitStart}
+          title={t(locale, 'common.resizeHeight')}
+          className="group relative z-20 flex h-1.5 shrink-0 cursor-row-resize items-stretch justify-center border-t border-border-soft"
+        >
+          <div className="h-0.5 w-full bg-transparent transition-colors group-hover:bg-accent/40" />
+        </div>
+      )}
+
+      {/* AI input box. Dock: right column (resizable width). Chat: full-width
+          row pinned below the return stream (resizable height). */}
       <section
-        className="relative flex shrink-0 flex-col"
-        style={{ width: renderedInputWidth }}
+        className="relative flex shrink-0 flex-col bg-panel"
+        style={isChat ? { height: chatInputHeight } : { width: renderedInputWidth }}
       >
         <header className="flex items-center justify-between gap-2 border-b border-border-soft px-3 py-2">
           <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
@@ -1085,8 +1283,12 @@ export default function AIDock() {
                 : t(locale, 'dock.placeholder')
             }
             className={
-              'min-h-0 flex-1 resize-none rounded-md border p-2.5 text-sm leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent ' +
-              (dropActive ? 'border-accent bg-accent/5 ' : 'border-border bg-bg ') +
+              'owf-ai-input min-h-0 flex-1 resize-none rounded-md border bg-bg p-2.5 text-sm leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent ' +
+              (dropActive
+                ? 'owf-ai-input--drop border-accent '
+                : isChat
+                  ? 'owf-ai-input--chat border-border '
+                  : 'border-border ') +
               (isReadOnly ? 'cursor-not-allowed opacity-60' : '')
             }
           />
@@ -1129,15 +1331,30 @@ export default function AIDock() {
               className="min-w-0"
               icon="▣"
             />
-            <Select
-              title={t(locale, 'dock.modelStrategyTitle')}
-              options={modelStrategyOptions}
-              value={composer.modelStrategy}
-              onChange={(id) => setComposer({ modelStrategy: id as ModelStrategy })}
-              disabled={isReadOnly}
-              className="min-w-0"
-              icon="🧠"
-            />
+            {isClaudeCodeRuntime && (
+              <Select
+                title={t(locale, 'dock.channelTitle')}
+                options={channelSelectOptions}
+                value={channelSelectValue}
+                onChange={onChannelChange}
+                disabled={isReadOnly}
+                className="min-w-0"
+                icon="✦"
+              />
+            )}
+            {activeSessionIsWorkflow && !simpleMode && (
+              <Select
+                title={t(locale, 'dock.modelStrategyTitle')}
+                options={modelStrategyOptions}
+                value={composer.modelStrategy}
+                onChange={(id) =>
+                  setComposer({ modelStrategy: id as ModelStrategy })
+                }
+                disabled={isReadOnly}
+                className="min-w-0"
+                icon="🧠"
+              />
+            )}
             <div className="min-w-0 flex-1" />
             <button
               type="button"

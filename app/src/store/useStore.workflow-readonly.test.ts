@@ -196,8 +196,16 @@ describe('workflow read-only guard', () => {
     ).toBe('aiEditing');
     expect(
       sessionLiveStatus(ACTIVE_SESSION_KEY, {
+        runningSessions: [],
+        aiEditingSessions: [],
+        chattingSessions: [ACTIVE_SESSION_KEY],
+      }),
+    ).toBe('running');
+    expect(
+      sessionLiveStatus(ACTIVE_SESSION_KEY, {
         runningSessions: [ACTIVE_SESSION_KEY],
         aiEditingSessions: [ACTIVE_SESSION_KEY],
+        chattingSessions: [ACTIVE_SESSION_KEY],
       }),
     ).toBe('running');
   });

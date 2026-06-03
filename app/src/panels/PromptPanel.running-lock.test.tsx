@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 import AIDock from './AIDock';
 import PromptPanel from './PromptPanel';
+import { defaultBlueprint, simpleBlueprint } from '@/core/defaultBlueprint';
 import { defaultComposer, samplePromptGroups } from '@/store/sampleSessions';
 import type { Message } from '@/store/types';
 import { useStore } from '@/store/useStore';
@@ -17,6 +18,7 @@ function resetStoreForPromptLock(
 ): void {
   useStore.setState({
     mode,
+    workflow: defaultBlueprint('Prompt lock workflow'),
     selectedNodeId: null,
     aiStreaming: false,
     aiEditingSessions: [],
@@ -100,6 +102,12 @@ function sendButton(container: HTMLElement): HTMLButtonElement {
   return button;
 }
 
+function modelStrategyButton(container: HTMLElement): HTMLButtonElement | null {
+  return container.querySelector(
+    'button[title="模型策略 · AI 自动为每个节点选模型"]',
+  );
+}
+
 function typeIntoInput(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype,
@@ -174,6 +182,57 @@ describe('PromptPanel running lock', () => {
       expect(useStore.getState().composerFocusVersion).toBe(8);
       expect(input.value).toBe('existing draft\ngrill-me');
       expect(document.activeElement).toBe(input);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows the model strategy selector for workflow mode', async () => {
+    resetStoreForPromptLock('design');
+    const view = await renderPanels();
+
+    try {
+      expect(modelStrategyButton(view.container)).toBeInstanceOf(
+        HTMLButtonElement,
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('hides the model strategy selector for simple chat mode', async () => {
+    resetStoreForPromptLock('design');
+    useStore.setState({
+      workflow: simpleBlueprint('Simple chat'),
+    });
+    const view = await renderPanels();
+
+    try {
+      expect(modelStrategyButton(view.container)).toBeNull();
+      expect(view.container.textContent).not.toContain('尽量用更好的大模型');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('hides the model strategy selector for non-workflow sessions', async () => {
+    resetStoreForPromptLock('design');
+    useStore.setState({
+      activeSessionId: 's_chat',
+      sessions: [
+        {
+          id: 's_chat',
+          title: '未命名会话',
+          createdAt: 1,
+          updatedAt: 1,
+          isWorkflow: false,
+        },
+      ],
+    });
+    const view = await renderPanels();
+
+    try {
+      expect(modelStrategyButton(view.container)).toBeNull();
     } finally {
       await view.cleanup();
     }

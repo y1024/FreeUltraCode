@@ -7,7 +7,13 @@
 FreeUltraCode 是一个本地优先的编程工作流工具。它把免费和低成本大模型接入到可编辑的 Dynamic Workflow 里，让多个便宜模型通过多角度探索、对抗验证、方案投票和自适应重试来提高复杂编程任务的准确率，而不是每一步都依赖最贵的模型。
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="FreeUltraCode 编辑器截图" width="960">
+  <strong>免费渠道路由</strong><br>
+  <img src="images/hero-free-channels.zh-CN.png" alt="FreeUltraCode 免费渠道路由截图" width="960">
+</p>
+
+<p align="center">
+  <strong>同时支持 Chat 模式与 Workflow 模式</strong><br>
+  <img src="images/hero-dual-mode.zh-CN.png" alt="FreeUltraCode 同时支持 Chat 与 Workflow 双模式截图" width="960">
 </p>
 
 ## 为什么做 FreeUltraCode
@@ -95,22 +101,95 @@ npm run package
 
 ## 使用方式
 
-### 使用免费渠道聊天
+### 注册免费渠道
 
-1. 点击侧边栏 **+ New Session**。
-2. 选择一个免费渠道，例如 Gemini、DeepSeek、Kimi、Groq 或 Ollama。
-3. 如果渠道需要 API Key，在设置里粘贴即可。本地运行时只需要本地服务已启动，并配置模型名称。
-4. 在底部输入框提问。
-5. 星标会话后，它会出现在 **Favorites** 标签页。
+1. 如果希望 Claude Code 通过免费渠道路由访问模型，先在底部运行时菜单里选择 **Claude Code**。
+
+<p align="center">
+  <img src="images/注册免费渠道/0-切换到ClaudeCode.png" alt="切换到 Claude Code 运行时" width="960">
+</p>
+
+2. 打开底部渠道菜单，选择一个带警告符号的免费渠道，例如 **Free · OpenRouter**。
+
+<p align="center">
+  <img src="images/注册免费渠道/1-随便找一个没有配置的渠道.png" alt="选择一个还没有配置的免费渠道" width="960">
+</p>
+
+3. 在弹窗里点击 **打开注册网址**，到平台官网创建 API Key，再粘贴回 FreeUltraCode 并点击 **保存并使用**。
+
+<p align="center">
+  <img src="images/注册免费渠道/2-打开注册网站.png" alt="打开渠道注册网站" width="960">
+</p>
+
+<p align="center">
+  <img src="images/注册免费渠道/3-新建Key.png" alt="在渠道平台新建 API Key" width="960">
+</p>
+
+<p align="center">
+  <img src="images/注册免费渠道/4-配置好好就没有警告符号了.png" alt="配置完成后渠道警告符号消失" width="960">
+</p>
+
+4. 也可以从左下角 **设置** 进入 **免费渠道**，集中查看每个渠道的 API Key、默认模型和配置状态。
+
+<p align="center">
+  <img src="images/注册免费渠道/5-配置中的免费渠道.png" alt="在设置里查看和配置免费渠道" width="960">
+</p>
+
+渠道状态显示 **已就绪** 后，就可以在底部输入框提问，或者运行 workflow。完整步骤见 [注册并配置免费渠道 API Key](register-free-channel.md)。
+
+### 使用 Chat 编程
+
+Chat 模式适合单个明确的编程任务：直接描述要改什么，让 FreeUltraCode 读取项目、修改代码、运行验证，再根据结果继续追问。需要多智能体、投票、对抗审查或可复用流程时，再切换到 Workflow 模式。
+
+1. 点击左侧 **+ 新建会话**，创建一个新的 Chat。
+2. 在底部确认运行时、权限模式和工作区。要让 AI 修改代码时，工作区应指向当前要改的仓库；只想先问方案时，可以使用更保守的权限。
+3. 在 **AI 输入** 中写清楚编程需求：目标行为、涉及的界面或文件、验收标准、边界条件和限制。写完后按 `Ctrl+Enter`，或点击右下角发送按钮。
+
+<p align="center">
+  <img src="images/chat/h-新建chat.png" alt="新建 Chat 会话并输入编程需求" width="960">
+</p>
+
+4. 等待执行时，观察中间区域的消息流和命令记录。FreeUltraCode 会把读取文件、搜索代码、修改文件、运行检查等步骤拆成独立记录，并用状态标记显示是否完成。发现方向不对时，可以点击右上角 **停止**。
+
+<p align="center">
+  <img src="images/chat/i-等待完成.png" alt="等待 Chat 执行代码检查、修改和验证" width="960">
+</p>
+
+5. 完成后，先看 AI 的结果总结、改动范围和验证命令。如果还需要调整，直接在同一个 Chat 里继续补充要求；也可以点击右侧 **常用提示词**，让 AI 继续补目标、边界、错误处理、结构、成本或可靠性。
+6. 如果是界面功能，最后运行应用实测一次。下面这个例子里，Chat 根据需求给收藏任务增加了定时执行弹窗，并验证了周报提醒、执行时间、重复执行和运行时提醒开关。
+
+<p align="center">
+  <img src="images/chat/j-周报.png" alt="Chat 编程完成后显示定时执行任务弹窗" width="960">
+</p>
 
 ### 构建编程工作流
 
-1. 点击侧边栏 **+ New Workflow**。
-2. 在 AI 输入框描述编程任务，例如代码审查、迁移、重构计划、Bug 排查、测试生成、架构审计或实现方案。
-3. FreeUltraCode 生成蓝图后，可以继续用自然语言修改，也可以用右侧快捷提示优化结构、完整性、成本、可靠性和回退策略。
-4. 选中关键节点，修改提示词、schema、模型等级、provider 或执行参数。
-5. 对高风险节点使用 **Consensus**，让它执行对抗检查或投票。
-6. 点击 **Run**，观察节点级运行状态。
+1. 点击侧边栏 **+ New Workflow** 新建工作流。画布会先生成一个最小流程：**Start → 智能体 → End**。
+
+<p align="center">
+  <img src="images/workflow/a-新建workflow.png" alt="新建 Workflow 并在 AI 输入框填写需求" width="960">
+</p>
+
+2. 在底部 **AI 输入** 区写清楚编程需求，例如功能目标、交互方式、验收标准、边界条件和需要注意的文件。写完后按 `Ctrl+Enter`，或点击右下角发送按钮。
+3. FreeUltraCode 会把自然语言需求生成成可编辑的 Workflow 蓝图。蓝图底层是可运行的 JS 脚本，节点之间的连线表示执行顺序、并行分支、投票和汇总关系。
+
+<p align="center">
+  <img src="images/workflow/b-生成workflow蓝图.png" alt="根据需求生成的 Workflow 蓝图" width="960">
+</p>
+
+4. 如果蓝图还不够准确，可以继续在底部输入框补充要求，也可以点击右侧 **常用提示词**，让 AI 继续补目标、边界、错误处理、数据流、成本优化、并行结构、回退策略和验证节点。
+5. 选中关键节点后，在右侧检查或修改提示词、schema、模型、provider、样本数和执行参数。高风险步骤可以改成 **Consensus**，让多个样本从不同角度审查、投票或汇总。
+6. 点击顶部 **运行** 开始执行。运行中节点会高亮并显示状态，底部会输出节点日志和 AI 返回；输入区会进入只读状态。需要中断时，点击顶部 **运行中...停止**，停止后可以继续修改蓝图再运行。
+
+<p align="center">
+  <img src="images/workflow/c-运行中.png" alt="运行 Workflow 并查看节点状态" width="960">
+</p>
+
+7. 在桌面端，关闭主窗口不等于退出应用。FreeUltraCode 会驻留在 Windows 托盘，右键托盘图标可以 **打开主界面**、**打开 GitHub** 或 **退出**；需要让后台继续运行时，保持托盘进程即可。
+
+<p align="center">
+  <img src="images/workflow/d-常驻后台.png" alt="FreeUltraCode 托盘右键菜单" width="360">
+</p>
 
 ## CLI 预览
 
@@ -201,6 +280,7 @@ pencil/                Pencil 设计文件
 ## 相关文档
 
 - [FreeUltraCode 使用教程](claude-code-workflow-freeultracode.md)
+- [注册并配置免费渠道 API Key](register-free-channel.md)
 - [英文使用教程](claude-code-workflow-freeultracode.en.md)
 - [FreeUltraCode CLI usage](freeultracode-cli-usage.md)
 - [FreeUltraCode CLI skill spec](freeultracode-cli-skill-spec.md)

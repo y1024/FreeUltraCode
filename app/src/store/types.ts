@@ -28,6 +28,21 @@ export interface CanvasViewport {
   zoom: number;
 }
 
+export type ScheduledTaskWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface ScheduledTaskConfig {
+  enabled: boolean;
+  reminderText: string;
+  hour: number;
+  minute: number;
+  second: number;
+  weekdays: ScheduledTaskWeekday[];
+  repeat: boolean;
+  remindOnRun: boolean;
+  updatedAt: number;
+  lastRunAt?: number;
+}
+
 /** Lifecycle of an interactive message (a node asking the user to choose/type). */
 export type InteractionStatus = 'pending' | 'answered' | 'cancelled';
 
@@ -78,6 +93,8 @@ export interface Session {
   runStatus?: SessionRunStatus;
   /** True when a workflow session is pinned into the Sidebar favorites tab. */
   favorite?: boolean;
+  /** Optional alarm-style schedule for favorite sessions. */
+  scheduledTask?: ScheduledTaskConfig;
 }
 
 export interface PromptItem {

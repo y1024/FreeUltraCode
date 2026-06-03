@@ -7,7 +7,13 @@
 تطبيق FreeUltraCode لل سطح المكتب يجمع بين المحادثة المجانية مع النماذج الكبيرة والتحرير البصري لسير العمل متعدد الوكلاء. يمكنك التحدث مباشرة عبر 17+ قناة مجانية (Gemini، DeepSeek، Groq، Ollama…)، أو بناء رسوم بيانية لسير العمل على اللوحة وتحويلها إلى نصوص قابلة للتشغيل على Claude Code وCodex وGemini وبيئات تشغيل أخرى.
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="لقطة شاشة لمحرّر FreeUltraCode" width="960">
+  <strong>توجيه القنوات المجانية</strong><br>
+  <img src="images/hero-free-channels.ar.png" alt="لقطة شاشة لتوجيه القنوات المجانية في FreeUltraCode" width="960">
+</p>
+
+<p align="center">
+  <strong>وضعان: الدردشة وسير العمل</strong><br>
+  <img src="images/hero-dual-mode.ar.png" alt="لقطة شاشة لوضعي الدردشة وسير العمل في FreeUltraCode" width="960">
 </p>
 
 ## الميزات الرئيسية

@@ -236,7 +236,11 @@ fn handle_request(mut request: Request) {
     }
 
     if !request_has_proxy_auth(&request) {
-        respond_json_error(request, 403, "free proxy: missing or invalid local auth token");
+        respond_json_error(
+            request,
+            403,
+            "free proxy: missing or invalid local auth token",
+        );
         return;
     }
 

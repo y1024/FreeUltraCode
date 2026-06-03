@@ -7,7 +7,13 @@
 FreeUltraCode ist eine Desktop-App, die kostenlosen KI-Chat und visuelle Multi-Agent-Workflow-Bearbeitung vereint. Chatte direkt über 17+ kostenlose Kanäle (Gemini, DeepSeek, Groq, Ollama…) oder baue Multi-Agent-Workflow-Graphen auf der Canvas, die zu ausführbaren Skripten für Claude Code, Codex, Gemini und weitere Runtimes kompiliert werden.
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="FreeUltraCode Editor-Screenshot" width="960">
+  <strong>Routing kostenloser Kanäle</strong><br>
+  <img src="images/hero-free-channels.de.png" alt="Screenshot des Routings kostenloser Kanäle in FreeUltraCode" width="960">
+</p>
+
+<p align="center">
+  <strong>Zwei Modi — Chat &amp; Workflow</strong><br>
+  <img src="images/hero-dual-mode.de.png" alt="Screenshot der Chat- und Workflow-Modi von FreeUltraCode" width="960">
 </p>
 
 ## Hauptfunktionen

@@ -125,12 +125,20 @@ fn auth_str(settings: &serde_json::Value, key: &str) -> Option<String> {
 }
 
 /// Parse a claude-type row into an importable provider (None when no key).
-fn parse_claude(settings: &serde_json::Value, name: String, cc_id: String) -> Option<ImportedProvider> {
+fn parse_claude(
+    settings: &serde_json::Value,
+    name: String,
+    cc_id: String,
+) -> Option<ImportedProvider> {
     let api_key = env_str(settings, "ANTHROPIC_AUTH_TOKEN")
         .or_else(|| env_str(settings, "ANTHROPIC_API_KEY"))?;
     Some(ImportedProvider {
         kind: "anthropic".to_string(),
-        name: if name.is_empty() { "Claude".to_string() } else { name },
+        name: if name.is_empty() {
+            "Claude".to_string()
+        } else {
+            name
+        },
         api_key,
         base_url: env_str(settings, "ANTHROPIC_BASE_URL").unwrap_or_default(),
         model: env_str(settings, "ANTHROPIC_MODEL"),
@@ -140,15 +148,22 @@ fn parse_claude(settings: &serde_json::Value, name: String, cc_id: String) -> Op
 
 /// Parse a codex-type row. Key lives in `auth.OPENAI_API_KEY`; base_url + model
 /// come from the embedded TOML `config` string.
-fn parse_codex(settings: &serde_json::Value, name: String, cc_id: String) -> Option<ImportedProvider> {
-    let api_key = auth_str(settings, "OPENAI_API_KEY")
-        .or_else(|| env_str(settings, "OPENAI_API_KEY"))?;
+fn parse_codex(
+    settings: &serde_json::Value,
+    name: String,
+    cc_id: String,
+) -> Option<ImportedProvider> {
+    let api_key =
+        auth_str(settings, "OPENAI_API_KEY").or_else(|| env_str(settings, "OPENAI_API_KEY"))?;
 
     let mut base_url = String::new();
     let mut model: Option<String> = None;
     if let Some(config_str) = settings.get("config").and_then(|v| v.as_str()) {
         if let Ok(cfg) = config_str.parse::<toml::Value>() {
-            model = cfg.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            model = cfg
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let provider_id = cfg.get("model_provider").and_then(|v| v.as_str());
             if let Some(pid) = provider_id {
                 base_url = cfg
@@ -164,7 +179,11 @@ fn parse_codex(settings: &serde_json::Value, name: String, cc_id: String) -> Opt
 
     Some(ImportedProvider {
         kind: "codex".to_string(),
-        name: if name.is_empty() { "Codex".to_string() } else { name },
+        name: if name.is_empty() {
+            "Codex".to_string()
+        } else {
+            name
+        },
         api_key,
         base_url,
         model,
@@ -174,13 +193,21 @@ fn parse_codex(settings: &serde_json::Value, name: String, cc_id: String) -> Opt
 
 /// Parse a gemini-type row (best-effort; cc-switch usually stores Google OAuth,
 /// so an API-key row is the exception). None when no usable key.
-fn parse_gemini(settings: &serde_json::Value, name: String, cc_id: String) -> Option<ImportedProvider> {
+fn parse_gemini(
+    settings: &serde_json::Value,
+    name: String,
+    cc_id: String,
+) -> Option<ImportedProvider> {
     let api_key = env_str(settings, "GEMINI_API_KEY")
         .or_else(|| env_str(settings, "GOOGLE_API_KEY"))
         .or_else(|| auth_str(settings, "GEMINI_API_KEY"))?;
     Some(ImportedProvider {
         kind: "gemini".to_string(),
-        name: if name.is_empty() { "Gemini".to_string() } else { name },
+        name: if name.is_empty() {
+            "Gemini".to_string()
+        } else {
+            name
+        },
         api_key,
         base_url: env_str(settings, "GOOGLE_GEMINI_BASE_URL").unwrap_or_default(),
         model: env_str(settings, "GEMINI_MODEL"),

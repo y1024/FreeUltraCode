@@ -182,6 +182,8 @@ import type {
   Session,
   SessionComposerSettings,
   SessionRunStatus,
+  ScheduledTaskConfig,
+  ScheduledTaskWeekday,
 } from './types';
 import {
   selectRunProgress,
@@ -386,6 +388,16 @@ export interface StoreState {
     sessionId: string,
     workspaceId: string | null,
     favorite: boolean,
+  ) => Promise<void>;
+  setWorkflowScheduledTaskSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    scheduledTask: ScheduledTaskConfig | null,
+  ) => Promise<void>;
+  runScheduledTaskSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    scheduledTask: ScheduledTaskConfig,
   ) => Promise<void>;
   sendPrompt: (text: string) => void;
   /**
@@ -812,8 +824,70 @@ function historySessionRunStatus(
   return persistedStatusForDisplay(status) as SessionRunStatus;
 }
 
+function isScheduledTaskWeekday(
+  value: unknown,
+): value is ScheduledTaskWeekday {
+  return (
+    value === 0 ||
+    value === 1 ||
+    value === 2 ||
+    value === 3 ||
+    value === 4 ||
+    value === 5 ||
+    value === 6
+  );
+}
+
+function normalizeSchedulePart(value: unknown, max: number): number | null {
+  if (typeof value !== 'number') return null;
+  if (!Number.isInteger(value) || value < 0 || value > max) return null;
+  return value;
+}
+
+function normalizeScheduledTask(
+  value: unknown,
+): ScheduledTaskConfig | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Partial<ScheduledTaskConfig>;
+  const hour = normalizeSchedulePart(raw.hour, 23);
+  const minute = normalizeSchedulePart(raw.minute, 59);
+  const second = normalizeSchedulePart(raw.second, 59);
+  const weekdays = Array.isArray(raw.weekdays)
+    ? Array.from(new Set(raw.weekdays)).filter(isScheduledTaskWeekday)
+    : [];
+  if (
+    typeof raw.enabled !== 'boolean' ||
+    typeof raw.reminderText !== 'string' ||
+    hour === null ||
+    minute === null ||
+    second === null ||
+    weekdays.length === 0 ||
+    typeof raw.repeat !== 'boolean' ||
+    typeof raw.remindOnRun !== 'boolean' ||
+    typeof raw.updatedAt !== 'number' ||
+    !Number.isFinite(raw.updatedAt)
+  ) {
+    return undefined;
+  }
+  return {
+    enabled: raw.enabled,
+    reminderText: raw.reminderText,
+    hour,
+    minute,
+    second,
+    weekdays,
+    repeat: raw.repeat,
+    remindOnRun: raw.remindOnRun,
+    updatedAt: raw.updatedAt,
+    ...(typeof raw.lastRunAt === 'number' && Number.isFinite(raw.lastRunAt)
+      ? { lastRunAt: raw.lastRunAt }
+      : {}),
+  };
+}
+
 function sessionFromSummary(summary: SessionSummary): Session {
   const runStatus = historySessionRunStatus(summary.runStatus);
+  const scheduledTask = normalizeScheduledTask(summary.scheduledTask);
   return {
     id: summary.id,
     workspaceId: summary.workspaceId,
@@ -826,12 +900,14 @@ function sessionFromSummary(summary: SessionSummary): Session {
     messageCount: summary.messageCount,
     ...(runStatus ? { runStatus } : {}),
     ...(summary.favorite === true ? { favorite: true } : {}),
+    ...(scheduledTask ? { scheduledTask } : {}),
   };
 }
 
 function summaryFromRecord(record: SessionRecord): SessionSummary {
   const last = record.messages[record.messages.length - 1]?.text?.trim();
   const runStatus = record.meta?.runStatus;
+  const scheduledTask = normalizeScheduledTask(record.meta?.scheduledTask);
   return {
     id: record.id,
     workspaceId: record.workspaceId,
@@ -844,6 +920,7 @@ function summaryFromRecord(record: SessionRecord): SessionSummary {
     messageCount: record.messages.length,
     ...(runStatus ? { runStatus } : {}),
     ...(record.meta?.favorite === true ? { favorite: true } : {}),
+    ...(scheduledTask ? { scheduledTask } : {}),
   };
 }
 
@@ -2247,6 +2324,139 @@ async function setWorkflowFavoriteHistorySession(
   });
 }
 
+async function setWorkflowScheduledTaskHistorySession(
+  sessionId: string,
+  workspaceId: string | null,
+  scheduledTask: ScheduledTaskConfig | null,
+): Promise<void> {
+  const normalizedTask = scheduledTask
+    ? normalizeScheduledTask(scheduledTask)
+    : undefined;
+  if (scheduledTask && !normalizedTask) {
+    throw new Error('Invalid scheduled task config');
+  }
+
+  const state = useStore.getState();
+  if (!workspaceId || !state.historyReady) {
+    const localSessions = workspaceId
+      ? state.sessionTree[workspaceId] ?? state.sessions
+      : state.sessions;
+    const target = localSessions.find((session) =>
+      sessionMatchesTarget(session, sessionId, workspaceId),
+    );
+    if (!target) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    useStore.setState((s) => {
+      const update = (session: Session): Session => {
+        if (!sessionMatchesTarget(session, sessionId, workspaceId)) {
+          return session;
+        }
+        return normalizedTask
+          ? { ...session, scheduledTask: normalizedTask }
+          : { ...session, scheduledTask: undefined };
+      };
+      return {
+        sessions: s.sessions.map(update),
+        sessionTree: workspaceId
+          ? {
+              ...s.sessionTree,
+              [workspaceId]: (s.sessionTree[workspaceId] ?? s.sessions).map(
+                update,
+              ),
+            }
+          : s.sessionTree,
+      };
+    });
+    return;
+  }
+
+  const record = await historyStore.getSession(workspaceId, sessionId);
+  if (!record) {
+    throw new Error(`Session not found: ${workspaceId}/${sessionId}`);
+  }
+
+  const updated = await historyStore.updateSession(workspaceId, sessionId, {
+    meta: { scheduledTask: normalizedTask ?? null },
+    preserveUpdatedAt: true,
+  });
+  const updatedSession = sessionFromRecord(updated);
+
+  useStore.setState((s) => {
+    const update = (session: Session): Session =>
+      sessionMatchesTarget(session, sessionId, workspaceId)
+        ? updatedSession
+        : session;
+    return {
+      sessions: s.sessions.map(update),
+      sessionTree: s.sessionTree[workspaceId]
+        ? {
+            ...s.sessionTree,
+            [workspaceId]: s.sessionTree[workspaceId].map(update),
+          }
+        : s.sessionTree,
+    };
+  });
+}
+
+function scheduledTaskAlertMessage(
+  title: string,
+  scheduledTask: ScheduledTaskConfig,
+): string {
+  const text = scheduledTask.reminderText.trim();
+  return text ? `定时任务提醒\n${title}\n\n${text}` : `定时任务提醒\n${title}`;
+}
+
+async function runScheduledTaskHistorySession(
+  sessionId: string,
+  workspaceId: string | null,
+  scheduledTask: ScheduledTaskConfig,
+): Promise<void> {
+  const normalizedTask = normalizeScheduledTask(scheduledTask);
+  if (!normalizedTask?.enabled) return;
+
+  const state = useStore.getState();
+  const targetWorkspaceId = workspaceId ?? state.activeWorkspaceId ?? null;
+  const sessionKey = { workspaceId: targetWorkspaceId, sessionId };
+  if (sessionLiveStatus(sessionKey, state)) return;
+
+  const targetSessions = targetWorkspaceId
+    ? sessionsForWorkspaceState(state, targetWorkspaceId)
+    : state.sessions;
+  const target = targetSessions.find((session) =>
+    sessionMatchesTarget(session, sessionId, targetWorkspaceId),
+  );
+  if (!target) return;
+
+  if (normalizedTask.remindOnRun && typeof window !== 'undefined') {
+    window.alert(scheduledTaskAlertMessage(target.title, normalizedTask));
+  }
+
+  await activateHistorySession(sessionId, targetWorkspaceId ?? undefined);
+  const current = useStore.getState();
+  if (
+    current.activeSessionId !== sessionId ||
+    (targetWorkspaceId !== null && current.activeWorkspaceId !== targetWorkspaceId)
+  ) {
+    return;
+  }
+  if (
+    sessionLiveStatus(
+      { workspaceId: current.activeWorkspaceId ?? null, sessionId },
+      current,
+    )
+  ) {
+    return;
+  }
+
+  if (current.workflow.meta?.simple === true || target.isWorkflow === false) {
+    current.sendPrompt(normalizedTask.reminderText);
+    return;
+  }
+  current.runWorkflow();
+}
+
 async function activateWorkspacePath(path: string): Promise<void> {
   const trimmed = normalizeWorkspacePath(path);
   if (!trimmed) return;
@@ -2875,6 +3085,12 @@ export const useStore = create<StoreState>((set) => ({
 
   setWorkflowFavoriteSession: (sessionId, workspaceId, favorite) =>
     setWorkflowFavoriteHistorySession(sessionId, workspaceId, favorite),
+
+  setWorkflowScheduledTaskSession: (sessionId, workspaceId, scheduledTask) =>
+    setWorkflowScheduledTaskHistorySession(sessionId, workspaceId, scheduledTask),
+
+  runScheduledTaskSession: (sessionId, workspaceId, scheduledTask) =>
+    runScheduledTaskHistorySession(sessionId, workspaceId, scheduledTask),
 
   // AI-driven graph edit (design mode only).
   //

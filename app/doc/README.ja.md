@@ -7,7 +7,13 @@
 FreeUltraCode は、無料 AI モデルチャットとビジュアルなマルチエージェントワークフロー編集を組み合わせたデスクトップアプリです。17+ の無料チャネル（Gemini、DeepSeek、Groq、Ollama…）で直接チャットするか、キャンバス上にマルチエージェントワークフローグラフを構築し、Claude Code、Codex、Gemini などのランタイム向け実行可能スクリプトにコンパイルできます。
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="FreeUltraCode エディタのスクリーンショット" width="960">
+  <strong>無料チャネルのルーティング</strong><br>
+  <img src="images/hero-free-channels.ja.png" alt="FreeUltraCode の無料チャネルルーティングのスクリーンショット" width="960">
+</p>
+
+<p align="center">
+  <strong>Chat と Workflow の 2 つのモード</strong><br>
+  <img src="images/hero-dual-mode.ja.png" alt="FreeUltraCode の Chat と Workflow デュアルモードのスクリーンショット" width="960">
 </p>
 
 ## 主な機能

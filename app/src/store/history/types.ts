@@ -8,7 +8,11 @@
 
 import type { IRGraph, IRRunStatus } from '@/core/ir';
 import type { RuntimeAdapterId } from '@/lib/adapters';
-import type { CanvasViewport, Message } from '@/store/types';
+import type {
+  CanvasViewport,
+  Message,
+  ScheduledTaskConfig,
+} from '@/store/types';
 import { HISTORY_ERROR_CODES } from './constants';
 
 export {
@@ -266,6 +270,7 @@ export interface SessionMeta extends HistoryMetadata {
   permission?: string;
   model?: string;
   favorite?: boolean;
+  scheduledTask?: ScheduledTaskConfig | null;
   canvasViewport?: CanvasViewport | null;
   runStatus?: 'idle' | 'running' | 'success' | 'error' | 'interrupted';
   runState?: Record<string, IRRunStatus>;
@@ -343,6 +348,8 @@ export type SessionSummary = Pick<
   runStatus?: SessionMeta['runStatus'];
   /** Derived from meta.favorite for lightweight favorite-tab rendering. */
   favorite?: boolean;
+  /** Derived from meta.scheduledTask for lightweight schedule rendering. */
+  scheduledTask?: ScheduledTaskConfig;
 
   // Forward-compatible canonical fields.
   sessionId?: SessionId;

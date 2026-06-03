@@ -6,6 +6,7 @@ import {
   type CSSProperties,
 } from 'react';
 import {
+  AlarmClock,
   Download,
   Pencil,
   Search,
@@ -23,12 +24,13 @@ import {
   type WorkflowDeleteProtectionReason,
   type WorkflowSessionKey,
 } from '@/store/useStore';
-import type { Session } from '@/store/types';
+import type { ScheduledTaskConfig, Session } from '@/store/types';
 import type { WorkspaceSummary } from '@/store/history/types';
 import type { Locale } from '@/lib/i18n';
 import { useResizableWidth } from '@/lib/useResizableWidth';
 import { t } from '@/lib/i18n';
 import SettingsModal from './SettingsModal';
+import ScheduledTaskDialog from './ScheduledTaskDialog';
 
 /**
  * CONTRACT: default export, no props. Left session rail.
@@ -261,6 +263,23 @@ function FavoriteMarker({
   );
 }
 
+function ScheduledTaskMarker({
+  scheduledTask,
+  locale,
+}: {
+  scheduledTask?: ScheduledTaskConfig;
+  locale: Locale;
+}) {
+  if (!scheduledTask?.enabled) return null;
+  return (
+    <AlarmClock
+      size={12}
+      aria-label={t(locale, 'sidebar.scheduleBadge')}
+      className="shrink-0 text-accent-2"
+    />
+  );
+}
+
 export default function Sidebar() {
   const locale = useStore((s) => s.locale);
   const sessions = useStore((s) => s.sessions);
@@ -283,6 +302,9 @@ export default function Sidebar() {
   const setWorkflowFavoriteSession = useStore(
     (s) => s.setWorkflowFavoriteSession,
   );
+  const setWorkflowScheduledTaskSession = useStore(
+    (s) => s.setWorkflowScheduledTaskSession,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspaceLimits, setWorkspaceLimits] = useState<Record<string, number>>({});
   const [flatLimit, setFlatLimit] = useState(WORKFLOW_HISTORY_PAGE_SIZE);
@@ -301,6 +323,7 @@ export default function Sidebar() {
         isWorkflow: boolean;
         simple: boolean;
         favorite: boolean;
+        scheduledTask?: ScheduledTaskConfig;
       };
   type WorkspaceMenuState =
     | null
@@ -312,6 +335,12 @@ export default function Sidebar() {
 
   const [menu, setMenu] = useState<MenuState>(null);
   const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState>(null);
+  const [scheduleDialog, setScheduleDialog] = useState<{
+    sessionId: string;
+    workspaceId: string | null;
+    title: string;
+    scheduledTask?: ScheduledTaskConfig;
+  } | null>(null);
   const [renaming, setRenaming] = useState<{
     sessionId: string;
     workspaceId: string | null;
@@ -355,6 +384,7 @@ export default function Sidebar() {
       isWorkflow: boolean,
       simple: boolean,
       favorite: boolean,
+      scheduledTask?: ScheduledTaskConfig,
     ) => {
       event.preventDefault();
       event.stopPropagation();
@@ -370,6 +400,7 @@ export default function Sidebar() {
         isWorkflow,
         simple,
         favorite,
+        scheduledTask,
       });
       setWorkspaceMenu(null);
     },
@@ -457,6 +488,49 @@ export default function Sidebar() {
     );
     setMenu(null);
   }, [menu, setWorkflowFavoriteSession]);
+
+  const handleOpenSchedule = useCallback(() => {
+    if (!menu?.favorite) return;
+    setScheduleDialog({
+      sessionId: menu.sessionId,
+      workspaceId: menu.workspaceId,
+      title: menu.title,
+      scheduledTask: menu.scheduledTask,
+    });
+    setMenu(null);
+  }, [menu]);
+
+  const handleSaveSchedule = useCallback(
+    async (scheduledTask: ScheduledTaskConfig) => {
+      if (!scheduleDialog) return;
+      await setWorkflowScheduledTaskSession(
+        scheduleDialog.sessionId,
+        scheduleDialog.workspaceId,
+        scheduledTask,
+      );
+      setScheduleDialog((current) =>
+        current
+          ? {
+              ...current,
+              scheduledTask,
+            }
+          : current,
+      );
+    },
+    [scheduleDialog, setWorkflowScheduledTaskSession],
+  );
+
+  const handleDeleteSchedule = useCallback(async () => {
+    if (!scheduleDialog) return;
+    await setWorkflowScheduledTaskSession(
+      scheduleDialog.sessionId,
+      scheduleDialog.workspaceId,
+      null,
+    );
+    setScheduleDialog((current) =>
+      current ? { ...current, scheduledTask: undefined } : current,
+    );
+  }, [scheduleDialog, setWorkflowScheduledTaskSession]);
 
   const handleImportToWorkspace = useCallback(() => {
     if (!workspaceMenu) return;
@@ -977,6 +1051,7 @@ export default function Sidebar() {
                                       session.isWorkflow,
                                       session.simple === true,
                                       session.favorite === true,
+                                      session.scheduledTask,
                                     )
                                   }
                                   className={
@@ -1070,6 +1145,7 @@ export default function Sidebar() {
                                       session.isWorkflow,
                                       session.simple === true,
                                       session.favorite === true,
+                                      session.scheduledTask,
                                     )
                                   }
                                   className={
@@ -1088,6 +1164,10 @@ export default function Sidebar() {
                                     <span className="flex min-w-0 flex-1 items-center gap-1">
                                       <FavoriteMarker
                                         favorite={session.favorite === true}
+                                        locale={locale}
+                                      />
+                                      <ScheduledTaskMarker
+                                        scheduledTask={session.scheduledTask}
                                         locale={locale}
                                       />
                                       <span className="min-w-0 flex-1 truncate text-sm">
@@ -1167,6 +1247,7 @@ export default function Sidebar() {
                             session.isWorkflow,
                             session.simple === true,
                             session.favorite === true,
+                            session.scheduledTask,
                           )
                         }
                         className={
@@ -1249,6 +1330,7 @@ export default function Sidebar() {
                             session.isWorkflow,
                             session.simple === true,
                             session.favorite === true,
+                            session.scheduledTask,
                           )
                         }
                         className={
@@ -1267,6 +1349,10 @@ export default function Sidebar() {
                           <span className="flex min-w-0 flex-1 items-center gap-1">
                             <FavoriteMarker
                               favorite={session.favorite === true}
+                              locale={locale}
+                            />
+                            <ScheduledTaskMarker
+                              scheduledTask={session.scheduledTask}
                               locale={locale}
                             />
                             <span className="min-w-0 flex-1 truncate text-sm">
@@ -1322,6 +1408,7 @@ export default function Sidebar() {
           locale={locale}
           canFavorite={true}
           isFavorite={menu.favorite}
+          canSchedule={menu.favorite}
           canRename={true}
           canExportWorkflow={menu.isWorkflow && !menu.simple}
           deleteDisabledReason={deleteProtectionLabel(
@@ -1329,10 +1416,21 @@ export default function Sidebar() {
             menuDeleteProtectionReason,
           )}
           onToggleFavorite={handleToggleFavorite}
+          onSchedule={handleOpenSchedule}
           onRename={handleStartRename}
           onExport={handleExport}
           onDelete={handleDelete}
           onClose={() => setMenu(null)}
+        />
+      )}
+      {scheduleDialog && (
+        <ScheduledTaskDialog
+          locale={locale}
+          title={scheduleDialog.title}
+          initialTask={scheduleDialog.scheduledTask}
+          onSave={handleSaveSchedule}
+          onDelete={handleDeleteSchedule}
+          onClose={() => setScheduleDialog(null)}
         />
       )}
       {workspaceMenu && (
@@ -1374,10 +1472,12 @@ function SessionContextMenu({
   locale,
   canFavorite,
   isFavorite,
+  canSchedule,
   canRename,
   canExportWorkflow,
   deleteDisabledReason,
   onToggleFavorite,
+  onSchedule,
   onRename,
   onExport,
   onDelete,
@@ -1388,10 +1488,12 @@ function SessionContextMenu({
   locale: Locale;
   canFavorite: boolean;
   isFavorite: boolean;
+  canSchedule: boolean;
   canRename: boolean;
   canExportWorkflow: boolean;
   deleteDisabledReason: string | null;
   onToggleFavorite: () => void;
+  onSchedule: () => void;
   onRename: () => void;
   onExport: () => void;
   onDelete: () => void;
@@ -1434,6 +1536,19 @@ function SessionContextMenu({
                   : 'sidebar.favoriteSession',
               )}
             </span>
+          </button>
+        )}
+        {canSchedule && (
+          <button
+            type="button"
+            onClick={onSchedule}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg"
+          >
+            <AlarmClock
+              size={13}
+              className="text-fg-faint"
+            />
+            <span>{t(locale, 'sidebar.scheduleTask')}</span>
           </button>
         )}
         {canRename && (

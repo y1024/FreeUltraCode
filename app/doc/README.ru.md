@@ -7,7 +7,13 @@
 FreeUltraCode — это десктопное приложение, объединяющее бесплатный чат с ИИ-моделями и визуальный редактор многоагентных рабочих процессов. общайтесь напрямую через 17+ бесплатных каналов (Gemini, DeepSeek, Groq, Ollama…) или строите графы многоагентных workflows на холсте, компилируемые в исполняемые скрипты для Claude Code, Codex, Gemini и других сред выполнения.
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="Снимок экрана редактора FreeUltraCode" width="960">
+  <strong>Маршрутизация бесплатных каналов</strong><br>
+  <img src="images/hero-free-channels.ru.png" alt="Снимок экрана маршрутизации бесплатных каналов FreeUltraCode" width="960">
+</p>
+
+<p align="center">
+  <strong>Два режима — Chat и Workflow</strong><br>
+  <img src="images/hero-dual-mode.ru.png" alt="Снимок экрана режимов Chat и Workflow в FreeUltraCode" width="960">
 </p>
 
 ## Ключевые возможности

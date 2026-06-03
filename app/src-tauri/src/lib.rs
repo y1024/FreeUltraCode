@@ -4,6 +4,11 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
+use tauri::{
+    menu::MenuBuilder,
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, Runtime,
+};
 
 mod cc_switch_import;
 mod cli_runtime;
@@ -15,6 +20,20 @@ mod history;
 /// window every time the app runs a node. No-op on other platforms.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+const MAIN_WINDOW_LABEL: &str = "main";
+const TRAY_MENU_SHOW_ID: &str = "tray-show-main";
+const TRAY_MENU_GITHUB_ID: &str = "tray-open-github";
+const TRAY_MENU_QUIT_ID: &str = "tray-quit";
+const GITHUB_REPOSITORY_URL: &str = "https://github.com/wellingfeng/FreeUltraCode";
+
+fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
 
 /// Apply the no-console-window flag to a Command on Windows (no-op elsewhere).
 fn hide_console(cmd: &mut Command) {
@@ -2424,6 +2443,48 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                let window_to_hide = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window_to_hide.hide();
+                    }
+                });
+            }
+
+            let tray_menu = MenuBuilder::new(app)
+                .text(TRAY_MENU_SHOW_ID, "打开主界面")
+                .text(TRAY_MENU_GITHUB_ID, "打开github")
+                .separator()
+                .text(TRAY_MENU_QUIT_ID, "退出")
+                .build()?;
+
+            let _tray = TrayIconBuilder::with_id("main-tray")
+                .icon(app.default_window_icon().cloned().unwrap())
+                .tooltip("FreeUltraCode")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    TRAY_MENU_SHOW_ID => show_main_window(app),
+                    TRAY_MENU_GITHUB_ID => {
+                        let _ = open_external(GITHUB_REPOSITORY_URL.to_string());
+                    }
+                    TRAY_MENU_QUIT_ID => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

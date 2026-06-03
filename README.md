@@ -49,7 +49,13 @@
 </p>
 
 <p align="center">
-  <img src="app/doc/images/0-标题使用.png" alt="FreeUltraCode editor screenshot" width="960">
+  <strong>Free channel routing</strong><br>
+  <img src="app/doc/images/hero-free-channels.png" alt="FreeUltraCode free channel routing screenshot" width="960">
+</p>
+
+<p align="center">
+  <strong>Two modes — Chat &amp; Workflow</strong><br>
+  <img src="app/doc/images/hero-dual-mode.png" alt="FreeUltraCode Chat and Workflow dual-mode screenshot" width="960">
 </p>
 
 > [!IMPORTANT]
@@ -140,13 +146,66 @@ From the repository root, `run.bat` rebuilds when needed and launches the Window
 
 ## Basic Usage
 
-### Chat With a Free Channel
+### Register a Free Channel
 
-1. Click **+ New Session** in the sidebar.
-2. Pick a free channel, for example Gemini, DeepSeek, Kimi, Groq, or Ollama.
-3. Paste the provider API key if the channel needs one. Local runtimes need only a running local server and a model override.
-4. Ask a coding question in the bottom input.
-5. Star the session if you want it pinned in **Favorites**.
+1. Select **Claude Code** from the bottom runtime menu if you want Claude Code to route through a free channel.
+
+<p align="center">
+  <img src="app/doc/images/注册免费渠道/0-切换到ClaudeCode.png" alt="Select Claude Code runtime" width="960">
+</p>
+
+2. Open the channel menu and choose a channel with a warning mark, for example **Free · OpenRouter**.
+
+<p align="center">
+  <img src="app/doc/images/注册免费渠道/1-随便找一个没有配置的渠道.png" alt="Choose an unconfigured free channel" width="960">
+</p>
+
+3. Click **Open registration site**, create an API key on the provider page, then paste it back into FreeUltraCode and click **Save and Use**.
+
+<p align="center">
+  <img src="app/doc/images/注册免费渠道/2-打开注册网站.png" alt="Open the provider registration site" width="960">
+</p>
+
+<p align="center">
+  <img src="app/doc/images/注册免费渠道/3-新建Key.png" alt="Create a provider API key" width="960">
+</p>
+
+<p align="center">
+  <img src="app/doc/images/注册免费渠道/4-配置好好就没有警告符号了.png" alt="Configured free channel without warning mark" width="960">
+</p>
+
+4. You can also manage every free channel from **Settings** → **Free Channels**. Channels marked **Ready** have the required configuration.
+
+<p align="center">
+  <img src="app/doc/images/注册免费渠道/5-配置中的免费渠道.png" alt="Manage free channels in settings" width="960">
+</p>
+
+After the channel is ready, use the bottom input to chat or run a workflow through that route. See the [free channel registration guide](app/doc/register-free-channel.md) for the full Chinese walkthrough.
+
+### Use Chat for Programming
+
+Chat mode is the fastest path for a single coding task: ask for the change, let FreeUltraCode inspect and edit the project, then review the command log and final result. Use Workflow mode when the task needs multiple agents, voting, or a reusable process.
+
+1. Click **+ New Chat** in the left sidebar.
+2. Choose the runtime, permission mode, and workspace from the bottom controls. For code edits, make sure the selected workspace is the repository you want to modify.
+3. Describe the programming request with enough implementation context: target behavior, affected UI or files, acceptance criteria, and any constraints. Press `Ctrl+Enter` or click the send button.
+
+<p align="center">
+  <img src="app/doc/images/chat/h-新建chat.png" alt="Create a new Chat session and enter a coding request" width="960">
+</p>
+
+4. While the task is running, watch the message stream and command rows. FreeUltraCode shows file reads, searches, edits, checks, and tool calls as separate entries, so you can see what the agent is doing. Click **Stop** if the request is going in the wrong direction.
+
+<p align="center">
+  <img src="app/doc/images/chat/i-等待完成.png" alt="Wait for Chat mode to inspect, edit, and verify the coding task" width="960">
+</p>
+
+5. After completion, review the summary, changed behavior, and verification commands. If the result needs adjustment, continue in the same chat with a follow-up request or use the right-side prompt shortcuts to clarify goals, boundaries, error handling, structure, cost, or reliability.
+6. For UI changes, run the app and check the feature directly. In this example, the chat request adds a scheduled task dialog for favorites, then verifies the modal and saved weekly schedule.
+
+<p align="center">
+  <img src="app/doc/images/chat/j-周报.png" alt="Chat mode result showing a scheduled task dialog added to the app" width="960">
+</p>
 
 ### Build a Coding Workflow
 
@@ -247,6 +306,7 @@ pencil/                Pencil design files
 
 - [Usage tutorial](app/doc/claude-code-workflow-freeultracode.en.md) - walkthrough from settings and AI input to blueprint generation, running, and appearance switching.
 - [Chinese usage tutorial](app/doc/claude-code-workflow-freeultracode.md)
+- [Free channel registration guide](app/doc/register-free-channel.md) - Chinese walkthrough for creating and saving a free-channel API key.
 - [FreeUltraCode CLI usage](app/doc/freeultracode-cli-usage.md)
 - [FreeUltraCode CLI skill spec](app/doc/freeultracode-cli-skill-spec.md)
 - [Chinese README](app/doc/README.zh-CN.md)

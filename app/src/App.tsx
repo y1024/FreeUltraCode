@@ -3,6 +3,7 @@ import BlueprintCanvas from '@/canvas/BlueprintCanvas';
 import Sidebar from '@/panels/Sidebar';
 import PromptPanel from '@/panels/PromptPanel';
 import AIDock from '@/panels/AIDock';
+import ScheduledTaskRunner from '@/components/ScheduledTaskRunner';
 import { primeCliRuntime } from '@/lib/cliConfig';
 import { useStore } from '@/store/useStore';
 
@@ -30,6 +31,7 @@ export default function App() {
   if (simpleMode) {
     return (
       <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg">
+        <ScheduledTaskRunner />
         <div className="hidden md:block">
           <Sidebar />
         </div>
@@ -45,6 +47,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg">
+      <ScheduledTaskRunner />
       <div className="hidden md:block">
         <Sidebar />
       </div>

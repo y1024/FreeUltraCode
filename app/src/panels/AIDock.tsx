@@ -55,7 +55,7 @@ import {
   openExternal,
   type LocalModelRuntimeStatus,
 } from '@/lib/tauri';
-import MessageContent from '@/components/ai/MessageContent';
+import LazyMessageContent from '@/components/ai/LazyMessageContent';
 import FilePreviewDrawer from '@/components/ai/FilePreviewDrawer';
 import type { FileRef } from '@/components/ai/lib/filePath';
 import {
@@ -67,6 +67,12 @@ import { isActiveAiEditingSession, useStore } from '@/store/useStore';
 
 const DEFAULT_DOCK_HEIGHT = 208; // matches the former h-52
 const MIN_DOCK_HEIGHT = 120;
+/**
+ * How many trailing messages render rich markdown eagerly on (re)mount. The rest
+ * start as cheap plain text and upgrade lazily on scroll — see LazyMessageContent.
+ * Sized to comfortably cover the visible bottom of the stream after auto-scroll.
+ */
+const EAGER_MESSAGE_TAIL = 6;
 /** Fixed height of the bottom input area in 'chat' layout (return fills the rest). */
 const CHAT_INPUT_HEIGHT = 232;
 
@@ -889,6 +895,18 @@ export default function AIDock({
     }
     return null;
   }, [messages]);
+  // The tail of the list is what's visible at the bottom on session switch, so
+  // those messages render their (expensive) markdown eagerly to keep the initial
+  // view correct and scroll-to-bottom precise. Everything above upgrades lazily
+  // as it scrolls into view (see LazyMessageContent), so opening a long history
+  // no longer parses every message's markdown in one blocking commit.
+  const eagerMessageIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (let i = Math.max(0, messages.length - EAGER_MESSAGE_TAIL); i < messages.length; i++) {
+      ids.add(messages[i].id);
+    }
+    return ids;
+  }, [messages]);
   const aiBusy = mode === 'running' || activeAiEditing || activeChatting;
 
   const modelStrategyOptions = useMemo<SelectOption[]>(
@@ -1578,12 +1596,20 @@ export default function AIDock({
                       </span>
                     ) : (
                       // Assistant / system: rich markdown, code, tables, file
-                      // chips, links, and collapsible reasoning blocks.
-                      <MessageContent
+                      // chips, links, and collapsible reasoning blocks. Off-screen
+                      // messages render as plain text first and upgrade lazily so
+                      // opening a long history doesn't block on parsing every one.
+                      <LazyMessageContent
                         text={m.text}
+                        fallback={cleanMessageText(m.text)}
                         streaming={aiBusy && m.id === lastAssistantId}
                         showActions={!isSystem}
                         onOpenFile={onOpenFile}
+                        eager={
+                          eagerMessageIds.has(m.id) ||
+                          (aiBusy && m.id === lastAssistantId)
+                        }
+                        scrollRootRef={streamRef}
                       />
                     )}
                   </li>

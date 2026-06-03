@@ -282,6 +282,9 @@ function sessionSummary(record: SessionRecord): SessionSummary {
     ...(record.workflow?.meta?.simple ? { simple: true } : {}),
     ...(runStatus ? { runStatus } : {}),
     ...(record.meta?.favorite === true ? { favorite: true } : {}),
+    ...(record.meta?.scheduledTask
+      ? { scheduledTask: record.meta.scheduledTask }
+      : {}),
   };
 }
 

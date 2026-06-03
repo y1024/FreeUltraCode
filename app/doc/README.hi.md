@@ -7,7 +7,13 @@
 FreeUltraCode एक डेस्कटॉप एप्लिकेशन है जो मुफ्त AI मॉडल चैट और विज़ुअल मल्टी-एजेंट वर्कफ़्लो संपादन को जोड़ती है। 17+ मुफ्त चैनलों (Gemini, DeepSeek, Groq, Ollama…) के माध्यम से सीधे चैट करें, या कैनवास पर मल्टी-एजेंट वर्कफ़्लो ग्राफ़ बनाएं जो Claude Code, Codex, Gemini और अन्य रनटाइम के लिए चलाने-योग्य स्क्रिप्ट में संकलित होते हैं।
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="FreeUltraCode एडिटर स्क्रीनशॉट" width="960">
+  <strong>मुफ्त चैनल रूटिंग</strong><br>
+  <img src="images/hero-free-channels.hi.png" alt="FreeUltraCode मुफ्त चैनल रूटिंग स्क्रीनशॉट" width="960">
+</p>
+
+<p align="center">
+  <strong>दो मोड — Chat और Workflow</strong><br>
+  <img src="images/hero-dual-mode.hi.png" alt="FreeUltraCode के Chat और Workflow डुअल मोड का स्क्रीनशॉट" width="960">
 </p>
 
 ## मुख्य विशेषताएं

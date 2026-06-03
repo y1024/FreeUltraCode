@@ -7,7 +7,13 @@
 FreeUltraCode는 무료 AI 모델 채팅과 시각적 멀티 에이전트 워크플로우 편집을 결합한 데스크톱 앱입니다. 17+ 무료 채널(Gemini, DeepSeek, Groq, Ollama…)으로 직접 채팅하거나, 캔버스에서 멀티 에이전트 워크플로우 그래프를 구축하여 Claude Code, Codex, Gemini 등 런타임용 실행 스크립트로 컴파일할 수 있습니다.
 
 <p align="center">
-  <img src="images/0-标题使用.png" alt="FreeUltraCode 편집기 스크린샷" width="960">
+  <strong>무료 채널 라우팅</strong><br>
+  <img src="images/hero-free-channels.ko.png" alt="FreeUltraCode 무료 채널 라우팅 스크린샷" width="960">
+</p>
+
+<p align="center">
+  <strong>Chat과 Workflow 두 가지 모드</strong><br>
+  <img src="images/hero-dual-mode.ko.png" alt="FreeUltraCode Chat 및 Workflow 듀얼 모드 스크린샷" width="960">
 </p>
 
 ## 주요 기능

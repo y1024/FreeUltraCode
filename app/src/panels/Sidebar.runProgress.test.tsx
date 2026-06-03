@@ -19,6 +19,18 @@ type MockSession = {
   isWorkflow: boolean;
   simple?: boolean;
   favorite?: boolean;
+  scheduledTask?: {
+    enabled: boolean;
+    reminderText: string;
+    hour: number;
+    minute: number;
+    second: number;
+    weekdays: (0 | 1 | 2 | 3 | 4 | 5 | 6)[];
+    repeat: boolean;
+    remindOnRun: boolean;
+    updatedAt: number;
+    lastRunAt?: number;
+  };
   runStatus?: 'success' | 'error' | 'interrupted';
 };
 
@@ -66,6 +78,16 @@ type MockStoreState = {
     sessionId: string,
     workspaceId: string | null,
     favorite: boolean,
+  ) => Promise<void>;
+  setWorkflowScheduledTaskSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    scheduledTask: MockSession['scheduledTask'] | null,
+  ) => Promise<void>;
+  runScheduledTaskSession: (
+    sessionId: string,
+    workspaceId: string | null,
+    scheduledTask: NonNullable<MockSession['scheduledTask']>,
   ) => Promise<void>;
   setWorkflow: () => void;
   markSaved: () => void;
@@ -190,6 +212,8 @@ function resetSidebarStore(): void {
     deleteSession: vi.fn(),
     renameWorkflowSession: vi.fn(async () => undefined),
     setWorkflowFavoriteSession: vi.fn(async () => undefined),
+    setWorkflowScheduledTaskSession: vi.fn(async () => undefined),
+    runScheduledTaskSession: vi.fn(async () => undefined),
     setWorkflow: vi.fn(),
     markSaved: vi.fn(),
   };
@@ -353,6 +377,14 @@ function contextMenuFavoriteButton(container: HTMLElement): HTMLButtonElement {
   return button as HTMLButtonElement;
 }
 
+function contextMenuScheduleButton(container: HTMLElement): HTMLButtonElement {
+  const button = Array.from(
+    container.querySelectorAll('button:not([role="tab"])'),
+  ).find((item) => item.textContent?.trim() === '定时执行');
+  expect(button).toBeInstanceOf(HTMLButtonElement);
+  return button as HTMLButtonElement;
+}
+
 function tabButton(container: HTMLElement, label: string): HTMLButtonElement {
   const button = Array.from(
     container.querySelectorAll('button[role="tab"]'),
@@ -380,6 +412,21 @@ async function changeInputValue(
   await act(async () => {
     setter?.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function changeTextAreaValue(
+  textarea: HTMLTextAreaElement,
+  value: string,
+): Promise<void> {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    'value',
+  )?.set;
+
+  await act(async () => {
+    setter?.call(textarea, value);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
 
@@ -508,6 +555,54 @@ describe('Sidebar workflow rename', () => {
         SESSION.id,
         WORKSPACE.id,
         false,
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('configures a scheduled task for favorite sessions from the context menu', async () => {
+    resetSidebarStore();
+    const favoriteSession = {
+      ...SESSION,
+      favorite: true,
+    };
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [favoriteSession],
+    };
+    mockState.sessions = [favoriteSession];
+
+    const view = await renderSidebar();
+
+    try {
+      await openSessionContextMenu(sessionButton(view.container, SESSION.title));
+      await clickButton(contextMenuScheduleButton(view.container));
+
+      expect(view.container.textContent).toContain('定时执行任务');
+      const textarea = view.container.querySelector('textarea');
+      expect(textarea).toBeInstanceOf(HTMLTextAreaElement);
+      await changeTextAreaValue(
+        textarea as HTMLTextAreaElement,
+        '每周五10点执行写周报任务',
+      );
+
+      const saveButton = Array.from(view.container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === '保存',
+      );
+      expect(saveButton).toBeInstanceOf(HTMLButtonElement);
+      await clickButton(saveButton as HTMLButtonElement);
+      await flushAsyncWork();
+
+      expect(mockState.setWorkflowScheduledTaskSession).toHaveBeenCalledWith(
+        SESSION.id,
+        WORKSPACE.id,
+        expect.objectContaining({
+          enabled: true,
+          reminderText: '每周五10点执行写周报任务',
+          weekdays: [1, 2, 3, 4, 5, 6, 0],
+          repeat: true,
+          remindOnRun: true,
+        }),
       );
     } finally {
       await view.cleanup();

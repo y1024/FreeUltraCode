@@ -859,30 +859,30 @@ export const permissionOptions: SelectOption[] = [
  */
 export const modelOptions: SelectOption[] = [
   {
-    id: 'claude-sonnet-4-20250514',
-    label: 'claude-sonnet-4',
-    hint: '标准',
-    translations: {
-      'zh-CN': { label: 'claude-sonnet-4', hint: '标准' },
-      'en-US': { label: 'claude-sonnet-4', hint: 'Standard' },
-    },
-  },
-  {
-    id: 'claude-opus-4-20250514',
-    label: 'claude-opus-4',
+    id: 'claude-opus-4-8',
+    label: 'claude-opus-4.8',
     hint: '深度',
     translations: {
-      'zh-CN': { label: 'claude-opus-4', hint: '深度' },
-      'en-US': { label: 'claude-opus-4', hint: 'Deep' },
+      'zh-CN': { label: 'claude-opus-4.8', hint: '深度' },
+      'en-US': { label: 'claude-opus-4.8', hint: 'Deep' },
     },
   },
   {
-    id: 'claude-3-5-haiku-latest',
-    label: 'claude-haiku-3.5',
+    id: 'claude-sonnet-4-6',
+    label: 'claude-sonnet-4.6',
+    hint: '标准',
+    translations: {
+      'zh-CN': { label: 'claude-sonnet-4.6', hint: '标准' },
+      'en-US': { label: 'claude-sonnet-4.6', hint: 'Standard' },
+    },
+  },
+  {
+    id: 'claude-haiku-4-5-20251001',
+    label: 'claude-haiku-4.5',
     hint: '轻量',
     translations: {
-      'zh-CN': { label: 'claude-haiku-3.5', hint: '轻量' },
-      'en-US': { label: 'claude-haiku-3.5', hint: 'Lightweight' },
+      'zh-CN': { label: 'claude-haiku-4.5', hint: '轻量' },
+      'en-US': { label: 'claude-haiku-4.5', hint: 'Lightweight' },
     },
   },
 ];

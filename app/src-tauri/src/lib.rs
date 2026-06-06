@@ -1855,6 +1855,23 @@ const PREVIEW_IMAGE_LIMIT: u64 = 12 * 1024 * 1024;
 const PREVIEW_BASENAME_SEARCH_LIMIT: usize = 20_000;
 const CLIPBOARD_IMAGE_LIMIT: usize = 32 * 1024 * 1024;
 
+/// Normalize path separators per-platform.
+///
+/// AI prose sometimes emits Windows-style paths (e.g. `\Users\me\file.md` or
+/// `src\store\x.ts`) even when the app runs on macOS/Linux, where `\` is not a
+/// path separator. On non-Windows platforms we rewrite `\` -> `/` so the path
+/// can resolve; on Windows both separators are already valid, so we leave the
+/// string untouched (a literal `\` could legitimately appear there).
+#[cfg(windows)]
+fn normalize_preview_separators(path: &str) -> String {
+    path.to_string()
+}
+
+#[cfg(not(windows))]
+fn normalize_preview_separators(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
 fn preview_path(path: &str, cwd: Option<&str>) -> Result<PathBuf, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -2045,6 +2062,9 @@ fn preview_local_file_blocking(
     path: String,
     cwd: Option<String>,
 ) -> Result<LocalFilePreview, String> {
+    // Normalize separators up front so both the direct resolver and the
+    // bare-name fallback operate on a consistent, platform-correct path.
+    let path = normalize_preview_separators(&path);
     let resolved = preview_path(&path, cwd.as_deref())?;
     let resolved = if resolved.exists() {
         resolved
@@ -3155,7 +3175,7 @@ fn ai_edit_graph_blocking(
     );
 
     let body = serde_json::json!({
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 8192,
         "system": AI_EDIT_SYSTEM,
         "messages": [
@@ -4084,6 +4104,11 @@ async fn ai_cli(
             // tool_use id → start time, so a tool_result can report its duration.
             let mut tool_starts: HashMap<String, std::time::Instant> = HashMap::new();
             let mut init_done = false;
+            // Surface the `requesting` status once so the gap between session
+            // init and the first token isn't filled only by "still running"
+            // heartbeats (a slow first token on a cold/large request can take
+            // tens of seconds). Emitted at most once per run.
+            let mut requesting_done = false;
             if let Some(o) = stdout {
                 let reader = std::io::BufReader::new(o);
                 for line in reader.lines() {
@@ -4135,6 +4160,16 @@ async fn ai_cli(
                                     format!("⚙ 会话已启动（{model}），开始处理…")
                                 };
                                 emit_progress(&app2, &run2, &format!("{line}\n"));
+                            } else if !requesting_done
+                                && v.get("subtype").and_then(|s| s.as_str()) == Some("status")
+                                && v.get("status").and_then(|s| s.as_str()) == Some("requesting")
+                            {
+                                // Between init and the first token the CLI is
+                                // waiting on the model. Show it once so a slow
+                                // first token reads as "requesting" rather than a
+                                // silent gap padded by heartbeats.
+                                requesting_done = true;
+                                emit_progress(&app2, &run2, "⏳ 正在请求模型…\n");
                             }
                         }
                         Some("stream_event") => {

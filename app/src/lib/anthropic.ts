@@ -20,7 +20,7 @@
  */
 
 /** Default Anthropic model id (kept in sync with the Rust backend). */
-export const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+export const DEFAULT_MODEL = 'claude-sonnet-4-6';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 

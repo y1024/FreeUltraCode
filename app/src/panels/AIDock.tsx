@@ -1374,7 +1374,7 @@ export default function AIDock({
       void freeChannelRevision;
       const cliRuntime = getCliRuntimeSnapshot();
       const desktop = tauriAvailable();
-      return listProviders()
+      const sorted = listProviders()
         .map((provider) => {
           const adapter = providerKindToAdapter(provider.kind);
           const runtime = getProviderRuntimeInfo(provider, {
@@ -1393,6 +1393,23 @@ export default function AIDock({
           if (rankA !== rankB) return rankA - rankB;
           return a.provider.name.localeCompare(b.provider.name);
         });
+      // Collapse providers that render identically in the channel picker. Two
+      // entries with the same adapter + name + baseUrl + model (e.g. a stale
+      // `direct` copy left beside a cc-switch `cli` import) would otherwise show
+      // up as duplicate "default" rows. Keep the first — the list is already
+      // sorted best-status-first, so we drop the weaker duplicate.
+      const seen = new Set<string>();
+      return sorted.filter(({ provider, adapter }) => {
+        const key = [
+          adapter,
+          provider.name.trim().toLowerCase(),
+          provider.baseUrl.trim().replace(/\/+$/, '').toLowerCase(),
+          (provider.model ?? '').trim().toLowerCase(),
+        ].join('\0');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     },
     [freeChannelRevision],
   );

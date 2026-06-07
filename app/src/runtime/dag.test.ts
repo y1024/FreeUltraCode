@@ -242,6 +242,139 @@ describe('executeWorkflowDag', () => {
     const result = await executeWorkflowDag(chainGraph(), callbacks, ctx(gw));
     expect(result.success).toBe(false); // cancelled mid-run
   });
+
+  it('keeps the selected model when Manifest mode is off', async () => {
+    const models: Array<string | undefined> = [];
+    const gw: RunGateway = {
+      ...mockGateway(async (_prompt, opts) => {
+        models.push(opts.model);
+        return 'ok';
+      }),
+      resolveCliRoute: async (selection) => ({
+        adapter: 'claude-code',
+        cliCommand: 'claude',
+        model: selection.modelClass,
+      }),
+    };
+
+    const result = await executeWorkflowDag(
+      singleAgentGraph('翻译这句话为英文。'),
+      collectingCallbacks([]),
+      ctx(gw, { selection: { adapter: 'claude-code', modelClass: 'sonnet' } }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(models).toEqual(['sonnet']);
+  });
+
+  it('routes unpinned simple nodes to haiku when Manifest mode is on', async () => {
+    const models: Array<string | undefined> = [];
+    const gw: RunGateway = {
+      ...mockGateway(async (_prompt, opts) => {
+        models.push(opts.model);
+        return 'ok';
+      }),
+      resolveCliRoute: async (selection) => ({
+        adapter: 'claude-code',
+        cliCommand: 'claude',
+        model: selection.modelClass,
+      }),
+      applyOverride: (selection, override) => ({
+        ...selection,
+        ...(override?.modelClass ? { modelClass: override.modelClass } : {}),
+      }),
+    };
+
+    const result = await executeWorkflowDag(
+      singleAgentGraph('翻译这句话为英文。'),
+      collectingCallbacks([]),
+      ctx(gw, {
+        selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+        manifestMode: true,
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(models).toEqual(['haiku']);
+  });
+
+  it('uses upstream context size when routing ordinary agent nodes in Manifest mode', async () => {
+    const models: Array<string | undefined> = [];
+    const gw: RunGateway = {
+      ...mockGateway(async (prompt, opts) => {
+        models.push(opts.model);
+        return prompt.includes('do A') ? 'x'.repeat(13000) : 'ok';
+      }),
+      resolveCliRoute: async (selection) => ({
+        adapter: 'claude-code',
+        cliCommand: 'claude',
+        model: selection.modelClass,
+      }),
+      applyOverride: (selection, override) => ({
+        ...selection,
+        ...(override?.modelClass ? { modelClass: override.modelClass } : {}),
+      }),
+    };
+
+    const result = await executeWorkflowDag(
+      chainGraph(),
+      collectingCallbacks([]),
+      ctx(gw, {
+        selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+        manifestMode: true,
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(models).toEqual(['haiku', 'sonnet']);
+  });
+
+  it('does not override an explicit node model in Manifest mode', async () => {
+    const models: Array<string | undefined> = [];
+    const gw: RunGateway = {
+      ...mockGateway(async (_prompt, opts) => {
+        models.push(opts.model);
+        return 'ok';
+      }),
+      resolveCliRoute: async (selection) => ({
+        adapter: 'claude-code',
+        cliCommand: 'claude',
+        model: selection.modelClass,
+      }),
+      applyOverride: (selection, override) => ({
+        ...selection,
+        ...(override?.modelClass ? { modelClass: override.modelClass } : {}),
+      }),
+      nodeGatewayOverride: (nodeOrParams) => {
+        const params = (
+          'params' in nodeOrParams ? nodeOrParams.params : nodeOrParams
+        ) as Record<string, unknown>;
+        const gateway =
+          params?.gateway &&
+          typeof params.gateway === 'object' &&
+          !Array.isArray(params.gateway)
+            ? (params.gateway as { modelClass?: string })
+            : undefined;
+        return gateway?.modelClass ? { modelClass: gateway.modelClass } : undefined;
+      },
+    };
+    const graph = singleAgentGraph('翻译这句话为英文。');
+    graph.nodes.find((node) => node.id === 'a')!.params.gateway = {
+      modelClass: 'opus',
+    };
+
+    const result = await executeWorkflowDag(
+      graph,
+      collectingCallbacks([]),
+      ctx(gw, {
+        selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+        manifestMode: true,
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(models).toEqual(['opus']);
+  });
 });
 /** A single terminal agent node: start → a → end. `a` is the exec-spine tail. */
 function singleAgentGraph(prompt = 'do the work'): IRGraph {

@@ -43,6 +43,12 @@ import {
 // these as --model is safe; the CLI resolves them against the active endpoint.
 const CLI_TIER_ALIASES = new Set(['sonnet', 'opus', 'haiku']);
 
+const DIRECT_CLAUDE_TIER_MODELS: Record<string, string> = {
+  haiku: 'claude-haiku-4-5-20251001',
+  sonnet: 'claude-sonnet-4-6',
+  opus: 'claude-opus-4-8',
+};
+
 /**
  * True only for strings that are safe to pass as a claude CLI `--model` value:
  * a genuine `claude-*` model id, or a bare tier alias the CLI maps. cc-switch
@@ -754,11 +760,12 @@ function resolveChannelModel(
     }
     // No channel model configured. For CLI launches the bare tier aliases are
     // safe and useful because the claude CLI maps them. For browser-direct
-    // Anthropic calls, omit the model so streamAnthropic uses its concrete
-    // default instead of sending an invalid tier alias like "sonnet".
-    return channel.route.transport === 'cli' && looksLikeClaudeModelId(modelClass)
-      ? modelClass
-      : undefined;
+    // Anthropic calls, map the tier to a concrete model id instead of sending an
+    // invalid bare alias like "sonnet".
+    if (channel.route.transport === 'cli' && looksLikeClaudeModelId(modelClass)) {
+      return modelClass;
+    }
+    return DIRECT_CLAUDE_TIER_MODELS[modelClass];
   }
 
   // codex / gemini: their model ids are real upstream ids; pass through.

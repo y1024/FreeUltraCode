@@ -80,6 +80,7 @@ import {
 import { getCliRuntimeSnapshot } from '@/lib/cliConfig';
 import { maybeRunCcSwitchAutoImportOnFirstRun } from '@/lib/ccSwitchAutoImport';
 import { ensureFreeProxy, isFreeChannelSelection } from '@/lib/freeChannels';
+import { getManifestModeEnabled } from '@/lib/manifestMode';
 import {
   generateImage,
   imageProviderById,
@@ -7059,6 +7060,7 @@ function buildGuiRunContext(ch: RunChannel, workflow: IRGraph): RuntimeRunContex
     concurrency: runConcurrency(),
     maxRetries: runMaxRetries(),
     consensusSamples: defaultConsensusSamples(),
+    manifestMode: getManifestModeEnabled(),
     // Quantity-for-quality run-time voting: starting count (min) + escalation
     // ceiling (max). GUI default 2/16; a feature's max<=1 disables it.
     runtimeVoteSamplesMin: runtimeVoteSampleRange().min,

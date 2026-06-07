@@ -115,6 +115,11 @@ import {
   type RunShellKind,
 } from '@/lib/shellConfig';
 import {
+  getManifestModeEnabled,
+  setManifestModeEnabled,
+  subscribeManifestMode,
+} from '@/lib/manifestMode';
+import {
   getCliRuntimeSnapshot,
   isCliAdapterAvailable,
   primeCliRuntime,
@@ -1177,10 +1182,15 @@ function GlobalRunControls({
   const [revision, setRevision] = useState(0);
   const [modelListRevision, setModelListRevision] = useState(0);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [manifestMode, setManifestModeState] = useState(() =>
+    getManifestModeEnabled(),
+  );
   const runSelection = useMemo(() => {
     void revision;
     return getActiveGatewaySelection();
   }, [revision]);
+
+  useEffect(() => subscribeManifestMode(setManifestModeState), []);
 
   useEffect(() => {
     const refresh = () => setRevision((n) => n + 1);
@@ -1447,6 +1457,11 @@ function GlobalRunControls({
     );
   };
 
+  const toggleManifestMode = (enabled: boolean) => {
+    setManifestModeEnabled(enabled);
+    setManifestModeState(enabled);
+  };
+
   return (
     <div className="rounded-lg border border-border bg-bg-alt p-4">
       <div className="mb-3 flex items-center gap-2">
@@ -1489,6 +1504,17 @@ function GlobalRunControls({
             }
           />
         </label>
+      </div>
+      <div className="mt-4 flex flex-col gap-3 border-t border-border-soft pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="text-sm font-medium text-fg">
+            {t(locale, 'settings.models.manifestModeLabel')}
+          </div>
+          <p className="text-xs leading-relaxed text-fg-faint">
+            {t(locale, 'settings.models.manifestModeDesc')}
+          </p>
+        </div>
+        <SwitchControl checked={manifestMode} onChange={toggleManifestMode} />
       </div>
     </div>
   );

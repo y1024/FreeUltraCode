@@ -674,6 +674,9 @@ const UI_FULL = {
     'settings.modelsTitle': '默认渠道',
     'settings.modelsDescription':
       '管理默认运行渠道。这里不预设上游地址，也不提供获取 Key；添加已有凭据后，可在 AI 输入框底部选择或继承默认。',
+    'settings.models.manifestModeLabel': 'Manifest 智能编排',
+    'settings.models.manifestModeDesc':
+      '默认关闭。开启后，运行 workflow 时会按节点复杂度自动分配模型档位：简单任务走轻量模型，复杂/推理任务走更强模型；节点里显式指定的模型仍优先。',
     'settings.models.claude': 'Claude（Anthropic）',
     'settings.models.codex': 'Codex',
     'settings.models.gemini': 'Gemini',
@@ -1346,6 +1349,9 @@ const UI_FULL = {
     'settings.modelsTitle': 'Default Channels',
     'settings.modelsDescription':
       'Manage default runtime channels. These entries do not include a known upstream URL or key retrieval action; add credentials you already have, then choose or inherit them from AI Input.',
+    'settings.models.manifestModeLabel': 'Manifest Smart Orchestration',
+    'settings.models.manifestModeDesc':
+      'Off by default. When enabled, workflow runs assign model tiers by node complexity: simple tasks use lightweight models, while complex or reasoning-heavy tasks use stronger models. Explicit node model choices still win.',
     'settings.models.claude': 'Claude (Anthropic)',
     'settings.models.codex': 'Codex',
     'settings.models.gemini': 'Gemini',

@@ -485,6 +485,35 @@ describe('model gateway compatibility', () => {
     expect(route.env).toMatchObject({ ANTHROPIC_MODEL: 'claude-opus-4-8' });
   });
 
+  it('maps bare Claude tiers to concrete direct Anthropic model ids when no model is pinned', () => {
+    window.localStorage.setItem(
+      PROVIDERS_STORAGE,
+      JSON.stringify([
+        {
+          id: 'anthropic_direct',
+          kind: 'anthropic',
+          transport: 'direct',
+          name: 'Anthropic',
+          apiKey: 'sk-test',
+          baseUrl: '',
+        },
+      ]),
+    );
+    const workflow = buildWorkflow([]);
+    workflow.meta.gateway = {
+      defaults: {
+        adapter: 'claude-code',
+        modelClass: 'haiku',
+        providerId: 'anthropic_direct',
+        channelId: 'default',
+      },
+    };
+
+    const route = resolveGatewayRoute(workflow);
+    expect(route.transport).toBe('anthropic');
+    expect(route.model).toBe('claude-haiku-4-5-20251001');
+  });
+
   it('passes a litellm per-tier model id through for claude-code', () => {
     const config = {
       version: 1,

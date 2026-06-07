@@ -264,6 +264,12 @@ export interface RunContext {
   /** Default consensus fan-out samples (clamped 2..7 by the engine). */
   consensusSamples: number;
   /**
+   * Manifest-style smart orchestration. When true, unpinned agent calls are
+   * scored by task complexity and routed to haiku / sonnet / opus tiers.
+   * Defaults to false; hosts opt in from settings.
+   */
+  manifestMode?: boolean;
+  /**
    * Quantity-for-quality run-time voting tunables. All OPTIONAL — when the *Max
    * fields are absent or <= 1 the engine makes a single call (no fan-out, no
    * extra agents), so headless / CLI / test callers that omit them are

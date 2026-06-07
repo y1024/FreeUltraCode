@@ -351,7 +351,9 @@ export async function executeWorkflowDag(
   // continue the predecessor's context instead of cold-starting (Fix 1). The
   // chain's EXEC dependency keeps its nodes strictly sequential, so the shared
   // session id is never used concurrently.
-  context.agentChains = detectAgentChains(order, workflow, context);
+  context.agentChains = context.manifestMode
+    ? undefined
+    : detectAgentChains(order, workflow, context);
 
   const resumeIdx = resumeFromNodeId
     ? order.findIndex((n) => n.id === resumeFromNodeId)

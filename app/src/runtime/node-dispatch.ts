@@ -7,7 +7,13 @@
  * speed clamps go through the injected gateway. Behaviour is identical to the
  * GUI's original implementation.
  */
-import type { ConsensusStrategy, GatewaySelection, IRGraph, IRNode } from '../core/ir';
+import type {
+  ConsensusStrategy,
+  GatewaySelection,
+  IRGraph,
+  IRNode,
+  NodeGatewayOverride,
+} from '../core/ir';
 import {
   VOTE_DIVERGENCE_THRESHOLD,
   measureDivergence,
@@ -15,6 +21,11 @@ import {
   normalizeForBucket,
   scaleCount,
 } from '../core/consensusHeuristic';
+import {
+  scoreManifestNode,
+  scoreManifestSpec,
+  type ManifestRoutingDecision,
+} from '../core/manifestRouter';
 import { runWithConcurrency } from './concurrency';
 import { runComposite } from './composite';
 import { isExecTerminalNode } from './dag';
@@ -191,6 +202,24 @@ function globalSelection(context: RunContext): GatewaySelection {
   return context.selection;
 }
 
+function isClaudeAdapter(adapter: string): boolean {
+  return adapter === 'claude' || adapter === 'claude-code';
+}
+
+function applyManifestDecision(
+  context: RunContext,
+  selection: GatewaySelection,
+  explicitOverride: NodeGatewayOverride | undefined,
+  decision: ManifestRoutingDecision,
+): GatewaySelection {
+  if (!context.manifestMode) return selection;
+  if (explicitOverride?.modelClass) return selection;
+  if (!isClaudeAdapter(selection.adapter)) return selection;
+  return context.gateway.applyOverride(selection, {
+    modelClass: decision.modelClass,
+  });
+}
+
 /**
  * Upstream-context caps for a node. Reads the optional `contextPolicy` param and
  * defaults to 'full' (byte-identical legacy output → zero behaviour change unless
@@ -232,10 +261,43 @@ function chainAwareContextCaps(
 function nodeSelection(
   context: RunContext,
   node: IRNode,
+  workflow?: IRGraph,
+  opts: { upstreamChars?: number } = {},
 ): GatewaySelection {
-  return context.gateway.applyOverride(
+  const explicitOverride = context.gateway.nodeGatewayOverride(node.params) ?? undefined;
+  const selection = context.gateway.applyOverride(
     globalSelection(context),
-    context.gateway.nodeGatewayOverride(node.params) ?? undefined,
+    explicitOverride,
+  );
+  if (!workflow) return selection;
+  return applyManifestDecision(
+    context,
+    selection,
+    explicitOverride,
+    scoreManifestNode(node, workflow, {
+      upstreamChars: opts.upstreamChars,
+      isTerminal: isTerminalNode(node, workflow),
+    }),
+  );
+}
+
+function specSelection(
+  context: RunContext,
+  parentNode: IRNode,
+  spec: RunSpec,
+  baseSelection: GatewaySelection,
+  opts: { upstreamChars?: number } = {},
+): GatewaySelection {
+  const explicitOverride = runSpecGatewayOverride(spec, context.gateway);
+  const selection = context.gateway.applyOverride(baseSelection, explicitOverride);
+  return applyManifestDecision(
+    context,
+    selection,
+    explicitOverride,
+    scoreManifestSpec(spec, {
+      parentType: parentNode.type,
+      upstreamChars: opts.upstreamChars,
+    }),
   );
 }
 
@@ -254,7 +316,9 @@ export async function runParallel(
   const branches = specList(node.params.branches, context.gateway);
   if (branches.length === 0) return '';
   const upstream = buildDataContextString(node, workflow, results, contextCaps(node));
-  const baseSelection = nodeSelection(context, node);
+  const baseSelection = nodeSelection(context, node, workflow, {
+    upstreamChars: upstream.length,
+  });
 
   const settled = await runWithConcurrency(
     branches,
@@ -265,10 +329,9 @@ export async function runParallel(
     async (b, i) => {
       const label = b.label || b.agentType || b.prompt.slice(0, 16) || `分支${i + 1}`;
       const stepLabel = `并行分支 ${i + 1}/${branches.length} · ${label}`;
-      const branchSelection = context.gateway.applyOverride(
-        baseSelection,
-        runSpecGatewayOverride(b, context.gateway),
-      );
+      const branchSelection = specSelection(context, node, b, baseSelection, {
+        upstreamChars: upstream.length,
+      });
       try {
         const out = (
           await runAgentWithInteraction({
@@ -300,7 +363,13 @@ export async function runParallel(
   const okParts = settled
     .filter((s): s is { ok: true; label: string; out: string } => s.ok)
     .map((s) => ({ label: s.label, out: s.out }));
-  const reduced = await reduceFanOutResults(context, callbacks, node, okParts);
+  const reduced = await reduceFanOutResults(
+    context,
+    callbacks,
+    node,
+    workflow,
+    okParts,
+  );
   if (reduced !== null) return reduced;
   return settled
     .map((s) =>
@@ -324,6 +393,7 @@ async function reduceFanOutResults(
   context: RunContext,
   callbacks: RunCallbacks,
   node: IRNode,
+  workflow: IRGraph,
   parts: { label: string; out: string }[],
 ): Promise<string | null> {
   const threshold =
@@ -352,7 +422,7 @@ async function reduceFanOutResults(
         head: `【${label}】\n`,
         label,
         basePrompt: prompt,
-        selection: nodeSelection(context, node),
+        selection: nodeSelection(context, node, workflow),
         cli: { cwd: context.cwd, permission: context.permission },
       })
     ).trim();
@@ -417,6 +487,7 @@ async function runPipelineChain(
   context: RunContext,
   callbacks: RunCallbacks,
   workflow: IRGraph,
+  node: IRNode,
   stages: RunSpec[],
   baseSelection: GatewaySelection,
   stage0Feed: string,
@@ -432,10 +503,9 @@ async function runPipelineChain(
     const label = s.label || s.prompt.slice(0, 16) || `阶段${i + 1}`;
     const stepLabel = `${labelPrefix}流水线阶段 ${i + 1}/${stages.length} · ${label}`;
     const feed = i === 0 ? stage0Feed : `\n\n---\n上一步输出：\n${prev}`;
-    const stageSelection = context.gateway.applyOverride(
-      baseSelection,
-      runSpecGatewayOverride(s, context.gateway),
-    );
+    const stageSelection = specSelection(context, node, s, baseSelection, {
+      upstreamChars: feed.length,
+    });
     prev = (
       await runAgentWithInteraction({
         context,
@@ -474,8 +544,10 @@ export async function runPipeline(
   const stages = specList(node.params.stages, context.gateway);
   if (stages.length === 0) return '';
   const itemsRaw = String(node.params.items ?? '').trim();
-  const baseSelection = nodeSelection(context, node);
   const upstream = buildDataContextString(node, workflow, results, contextCaps(node));
+  const baseSelection = nodeSelection(context, node, workflow, {
+    upstreamChars: upstream.length,
+  });
 
   const fanOut = pipelineFanOutItems(itemsRaw);
   if (fanOut) {
@@ -498,6 +570,7 @@ export async function runPipeline(
             context,
             callbacks,
             workflow,
+            node,
             stages,
             baseSelection,
             stage0Feed,
@@ -522,7 +595,13 @@ export async function runPipeline(
         s.ok ? { label: `条目 ${i + 1}/${total}: ${shortItemLabel(s.item)}`, out: s.out } : null,
       )
       .filter((p): p is { label: string; out: string } => p !== null);
-    const reduced = await reduceFanOutResults(context, callbacks, node, okParts);
+    const reduced = await reduceFanOutResults(
+      context,
+      callbacks,
+      node,
+      workflow,
+      okParts,
+    );
     if (reduced !== null) return reduced;
     return settled
       .map((s, i) =>
@@ -538,6 +617,7 @@ export async function runPipeline(
     context,
     callbacks,
     workflow,
+    node,
     stages,
     baseSelection,
     stage0Feed,
@@ -565,7 +645,9 @@ export async function runConsensus(
   if (voters.length === 0) return '';
   const strategy = consensusStrategy(node.params.strategy);
   const upstream = buildDataContextString(node, workflow, results, contextCaps(node));
-  const baseSelection = nodeSelection(context, node);
+  const baseSelection = nodeSelection(context, node, workflow, {
+    upstreamChars: upstream.length,
+  });
 
   const samples =
     strategy === 'self-consistency'
@@ -595,10 +677,9 @@ export async function runConsensus(
       if (callbacks.isCancelled()) return { ok: false, label: `样本${i + 1}`, out: '' };
       const label = s.label || s.agentType || s.prompt.slice(0, 16) || `样本${i + 1}`;
       const stepLabel = `共识样本 ${i + 1}/${total} · ${label}`;
-      const sampleSelection = context.gateway.applyOverride(
-        baseSelection,
-        runSpecGatewayOverride(s, context.gateway),
-      );
+      const sampleSelection = specSelection(context, node, s, baseSelection, {
+        upstreamChars: upstream.length,
+      });
       try {
         const out = (
           await runAgentWithInteraction({
@@ -971,7 +1052,6 @@ export async function dispatchNode(
     return skipped;
   }
   const label = node.label ?? node.type;
-  const selection = nodeSelection(context, node);
   switch (node.type) {
     case 'agent': {
       const base = String(node.params.prompt ?? node.label ?? '').trim();
@@ -980,16 +1060,22 @@ export async function dispatchNode(
         base,
         typeof node.params.agentType === 'string' ? node.params.agentType : undefined,
       );
+      const baseSelection = nodeSelection(context, node, workflow);
       // If this node belongs to a linear claude agent chain (Fix 1), reuse the
       // chain's warm session — exactly mirroring runPipeline's stage handling.
       const chain = context.agentChains?.get(node.id);
-      const prompt =
-        rolePrompt + buildDataContextString(
-          node,
-          workflow,
-          results,
-          chainAwareContextCaps(context, node, selection),
-        );
+      const dataContext = buildDataContextString(
+        node,
+        workflow,
+        results,
+        chainAwareContextCaps(context, node, baseSelection),
+      );
+      const selection = context.manifestMode
+        ? nodeSelection(context, node, workflow, {
+            upstreamChars: dataContext.length,
+          })
+        : baseSelection;
+      const prompt = rolePrompt + dataContext;
       // FEATURES 3 & 4 — run-time adversarial verify+vote for complex / terminal
       // nodes. Pre-gated so the default (both knobs = 1, and all headless
       // callers) skips this entirely. Mutually exclusive with warm-session
@@ -1021,14 +1107,20 @@ export async function dispatchNode(
     }
     case 'workflow': {
       const base = `运行子工作流 "${String(node.params.name ?? node.label ?? 'sub')}" 并返回结果。`;
+      const baseSelection = nodeSelection(context, node, workflow);
       const chain = context.agentChains?.get(node.id);
-      const prompt =
-        base + buildDataContextString(
-          node,
-          workflow,
-          results,
-          chainAwareContextCaps(context, node, selection),
-        );
+      const dataContext = buildDataContextString(
+        node,
+        workflow,
+        results,
+        chainAwareContextCaps(context, node, baseSelection),
+      );
+      const selection = context.manifestMode
+        ? nodeSelection(context, node, workflow, {
+            upstreamChars: dataContext.length,
+          })
+        : baseSelection;
+      const prompt = base + dataContext;
       if (!chain && runtimeVoteEnabled(context)) {
         const { min, max } = effectiveRuntimeSamples(context, node, workflow);
         if (max > 1) {

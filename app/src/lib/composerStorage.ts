@@ -12,6 +12,11 @@ import {
 import type { GatewaySelection } from '@/core/ir';
 import { isLocale, systemLocale, type Locale } from '@/lib/i18n';
 import { uniqueWorkspaceHistory } from '@/lib/workspaceHistory';
+import {
+  DEFAULT_GAME_EXPERT_SETTINGS,
+  normalizeGameExpertSettings,
+  type GameExpertSettings,
+} from '@/lib/gameExperts';
 
 /**
  * localStorage persistence for AI-input composer state, the AIDock height, and
@@ -27,6 +32,7 @@ const PROMPT_AUTO_TRANSLATE_KEY = 'freeultracode.promptAutoTranslate.v1';
 const PERSONAL_INSTRUCTIONS_KEY = 'freeultracode.personalInstructions.v1';
 const PERSONAL_INSTRUCTIONS_BY_MODEL_KEY =
   'freeultracode.personalInstructionsByModel.v1';
+const GAME_EXPERT_SETTINGS_KEY = 'freeultracode.gameExperts.v1';
 /** Tracks which PROMPT_DEFAULTS_VERSION the persisted library was migrated to. */
 const PROMPT_GROUPS_VERSION_KEY = 'freeultracode.promptGroups.version.v1';
 
@@ -215,6 +221,29 @@ export function savePersonalInstructionsByModel(
     window.localStorage.setItem(
       PERSONAL_INSTRUCTIONS_BY_MODEL_KEY,
       JSON.stringify(normalized),
+    );
+  } catch {
+    // non-fatal
+  }
+}
+
+export function loadGameExpertSettings(): GameExpertSettings {
+  if (!hasStorage()) return normalizeGameExpertSettings(DEFAULT_GAME_EXPERT_SETTINGS);
+  try {
+    const raw = window.localStorage.getItem(GAME_EXPERT_SETTINGS_KEY);
+    if (!raw) return normalizeGameExpertSettings(DEFAULT_GAME_EXPERT_SETTINGS);
+    return normalizeGameExpertSettings(JSON.parse(raw));
+  } catch {
+    return normalizeGameExpertSettings(DEFAULT_GAME_EXPERT_SETTINGS);
+  }
+}
+
+export function saveGameExpertSettings(settings: GameExpertSettings): void {
+  if (!hasStorage()) return;
+  try {
+    window.localStorage.setItem(
+      GAME_EXPERT_SETTINGS_KEY,
+      JSON.stringify(normalizeGameExpertSettings(settings)),
     );
   } catch {
     // non-fatal

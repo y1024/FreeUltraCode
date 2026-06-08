@@ -90,6 +90,36 @@ import {
   type ImageProviderId,
 } from '@/lib/imageGeneration';
 import {
+  generateMusic,
+  loadMusicGenerationSettings,
+  musicDurationSecondsFromPrompt,
+  musicProviderById,
+  musicProviderModel,
+  preferredReadyMusicProviderId,
+  stripMusicCommand,
+  type MusicProviderId,
+} from '@/lib/musicGeneration';
+import {
+  assessThreeDRigging,
+  generateThreeD,
+  loadThreeDGenerationSettings,
+  preferredReadyThreeDProviderId,
+  stripThreeDCommand,
+  threeDRiggingPromptGuidance,
+  threeDProviderById,
+  threeDProviderModel,
+  type ThreeDProviderId,
+} from '@/lib/threeDGeneration';
+import {
+  buildGameExpertPrompt,
+  normalizeGameExpertSettings,
+  type GameExpertSettings,
+} from '@/lib/gameExperts';
+import {
+  buildProducerPrompt,
+  shouldUseProducer,
+} from '@/lib/gameProducer';
+import {
   modelClassFromModelId,
   nodeParamsWithGatewayOverride,
   listGatewayRunOptions,
@@ -101,7 +131,13 @@ import {
 } from '@/lib/modelGateway/resolver';
 import { shortId } from '@/lib/id';
 import { translatePromptFields } from '@/lib/promptTranslation';
-import { aiEditViaCli, cancelAiCli, isTauri, runUltracode } from '@/lib/tauri';
+import {
+  aiEditViaCli,
+  cancelAiCli,
+  downloadModelAsset,
+  isTauri,
+  runUltracode,
+} from '@/lib/tauri';
 import {
   parseUltracodePrompt,
   summarizeUltracodeResult,
@@ -173,12 +209,14 @@ import {
 } from './sampleSessions';
 import {
   loadComposer,
+  loadGameExpertSettings,
   loadLocale,
   loadPersonalInstructionsByModel,
   loadPromptAutoTranslate,
   loadPromptGroups,
   loadPromptGroupsVersion,
   saveComposer,
+  saveGameExpertSettings,
   saveLocale,
   savePersonalInstructionsByModel,
   savePromptAutoTranslate,
@@ -190,6 +228,7 @@ import {
   normalizeWorkspacePath,
   uniqueWorkspaceHistory,
   workspaceHistoryWithRecent,
+  workspacePathKey,
 } from '@/lib/workspaceHistory';
 import {
   applyAppearance,
@@ -352,6 +391,7 @@ export interface StoreState {
   promptAutoTranslate: boolean;
   personalInstructionsByModel: PersonalInstructionsByModel;
   personalInstructions: string;
+  gameExpertSettings: GameExpertSettings;
   appearance: AppearanceSettings;
 
   // Composer (AI-input) state — pure UI, never enters the IRGraph.
@@ -405,6 +445,7 @@ export interface StoreState {
     instructions: string,
     selection?: GatewaySelection | null,
   ) => void;
+  setGameExpertSettings: (patch: Partial<GameExpertSettings>) => void;
   setStylePresetId: (stylePresetId: StylePresetId) => void;
   setStreamSchemeId: (streamSchemeId: StreamSchemeId) => void;
   setFontFamilyId: (fontFamilyId: FontFamilyId) => void;
@@ -465,10 +506,21 @@ export interface StoreState {
     workspaceId: string | null,
     scheduledTask: ScheduledTaskConfig,
   ) => Promise<void>;
-  sendPrompt: (text: string) => void;
+  sendPrompt: (
+    text: string,
+    options?: { forceGameExperts?: boolean; gameExpertIds?: string[] },
+  ) => void;
   generateImagePrompt: (
     text: string,
     options?: { providerId?: ImageProviderId; model?: string },
+  ) => void;
+  generateMusicPrompt: (
+    text: string,
+    options?: { providerId?: MusicProviderId; model?: string },
+  ) => void;
+  generateThreeDPrompt: (
+    text: string,
+    options?: { providerId?: ThreeDProviderId; model?: string },
   ) => void;
   runUltracodePrompt: (task: string) => void;
   /**
@@ -495,6 +547,7 @@ export interface StoreState {
   setComposerDraft: (text: string) => void;
   appendComposerDraft: (text: string) => void;
   setWorkspace: (path: string) => void;
+  removeWorkspace: (path: string) => void;
 
   // Graph editing
   addNode: (
@@ -693,9 +746,26 @@ function withNewSessionGatewayDefaults(workflow: IRGraph): IRGraph {
 
 function defaultSessionComposer(workspace?: string): ComposerSettings {
   const trimmed = workspace?.trim();
+  return normalizeComposerSettings(
+    { ...defaultComposer, workspace: trimmed || defaultComposer.workspace },
+  );
+}
+
+function normalizeComposerSettings(value: Partial<ComposerSettings> | undefined): ComposerSettings {
+  const source = value ?? {};
   return {
     ...defaultComposer,
-    workspace: trimmed || defaultComposer.workspace,
+    ...source,
+    modelStrategy: source.modelStrategy ?? defaultComposer.modelStrategy,
+    imageMode: source.imageMode ?? defaultComposer.imageMode,
+    imageModeStartedAt:
+      source.imageModeStartedAt ?? defaultComposer.imageModeStartedAt,
+    musicMode: source.musicMode ?? defaultComposer.musicMode,
+    musicModeStartedAt:
+      source.musicModeStartedAt ?? defaultComposer.musicModeStartedAt,
+    threeDMode: source.threeDMode ?? defaultComposer.threeDMode,
+    threeDModeStartedAt:
+      source.threeDModeStartedAt ?? defaultComposer.threeDModeStartedAt,
   };
 }
 
@@ -762,7 +832,7 @@ function composerPatchForSession(
     composerBySession = { ...composerBySession, [key]: snapshot };
   }
   return {
-    composer: snapshot.composer,
+    composer: normalizeComposerSettings(snapshot.composer),
     composerBySession,
     workflow: withSessionGatewayDefaults(workflow, snapshot.gatewaySelection),
   };
@@ -835,6 +905,17 @@ export function workflowDeleteProtectionReason(
 
 const WORKSPACE_HISTORY_LIMIT = 8;
 const CANVAS_VIEWPORT_PERSIST_DEBOUNCE_MS = 250;
+
+let historyNavigationVersion = 0;
+
+function beginHistoryNavigation(): number {
+  historyNavigationVersion += 1;
+  return historyNavigationVersion;
+}
+
+function isLatestHistoryNavigation(version: number): boolean {
+  return version === historyNavigationVersion;
+}
 
 const canvasViewportPersistTimers = new Map<
   string,
@@ -946,6 +1027,154 @@ function imageResultMarkdown(result: {
     .map((src, index) => `![生成图片 ${index + 1}](${src})`)
     .join('\n\n');
   return `${routeLine}\n✓ 图片生成完成\n\n提示词：${result.prompt}\n\n${imageLines}`;
+}
+
+function musicResultMarkdown(result: {
+  providerLabel: string;
+  model: string;
+  prompt: string;
+  audios: string[];
+}): string {
+  const routeLine = `⚙ 路由：${result.providerLabel} · 模型：${result.model}`;
+  const audioLines = result.audios
+    .map((src, index) => `[播放音频 ${index + 1}](${src})`)
+    .join('\n\n');
+  return `${routeLine}\n✓ 音乐生成完成\n\n提示词：${result.prompt}\n\n${audioLines}`;
+}
+
+function modelAssetHref(src: string): string {
+  if (/^(?:https?:|data:|file:\/\/)/i.test(src)) return src;
+  const normalized = src.replace(/\\/g, '/');
+  const encoded = encodeURI(normalized).replace(/#/g, '%23').replace(/\?/g, '%3F');
+  if (/^[A-Za-z]:\//.test(normalized)) return `file:///${encoded}`;
+  if (normalized.startsWith('//')) return `file:${encoded}`;
+  if (normalized.startsWith('/')) return `file://${encoded}`;
+  return src;
+}
+
+function threeDResultMarkdown(result: {
+  providerLabel: string;
+  model: string;
+  prompt: string;
+  rigging?: {
+    enabled: boolean;
+    defaultAnimations: string[];
+    requestedAnimations?: string[];
+    needsAnimationSearch?: boolean;
+  };
+  autoRigging?: {
+    status: 'succeeded' | 'skipped' | 'failed';
+    providerLabel: string;
+    reason?: string;
+    error?: string;
+  } | null;
+  assets: string[];
+  downloaded?: Array<{ source: string; path: string }>;
+  downloadErrors?: Array<{ source: string; error: string }>;
+}): string {
+  const routeLine = `⚙ 路由：${result.providerLabel} · 模型：${result.model}`;
+  const downloaded = new Map(
+    (result.downloaded ?? []).map((item) => [item.source, item.path]),
+  );
+  const assetLines = result.assets
+    .map(
+      (src, index) =>
+        `[预览 3D 模型 ${index + 1}](${modelAssetHref(downloaded.get(src) ?? src)})`,
+    )
+    .join('\n\n');
+  const downloadLines = [
+    ...downloaded.values(),
+  ].map((path, index) => `- 已下载到本地 ${index + 1}：${path}`);
+  const errorLines = (result.downloadErrors ?? []).map(
+    (item, index) => `- 下载失败 ${index + 1}：${item.error}（保留远程链接）`,
+  );
+  const downloadBlock =
+    downloadLines.length || errorLines.length
+      ? `\n\n${[...downloadLines, ...errorLines].join('\n')}`
+      : '';
+  const riggingLine = result.rigging
+    ? `\n骨骼：${
+        result.rigging.enabled
+          ? [
+              `已按可绑骨资产请求骨骼绑定和 ${result.rigging.defaultAnimations.join('、')} 预览动画`,
+              result.autoRigging?.status === 'succeeded'
+                ? `${result.autoRigging.providerLabel} 自动绑骨完成`
+                : '',
+              result.autoRigging?.status === 'skipped'
+                ? `自动绑骨跳过：${result.autoRigging.reason ?? '条件不足'}`
+                : '',
+              result.autoRigging?.status === 'failed'
+                ? `自动绑骨失败：${result.autoRigging.error ?? '未知错误'}`
+                : '',
+              result.rigging.requestedAnimations?.length
+                ? `额外动作：${result.rigging.requestedAnimations.join('、')}${
+                    result.rigging.needsAnimationSearch ? '（需匹配动画库）' : ''
+                  }`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('；')
+          : '静态资产，跳过骨骼绑定'
+      }`
+    : '';
+  return `${routeLine}\n✓ 3D 模型生成完成${riggingLine}\n\n提示词：${result.prompt}${downloadBlock}\n\n${assetLines}`;
+}
+
+function threeDAssetFileName(src: string, index: number): string {
+  const clean = src.trim().split(/[?#]/, 1)[0] ?? '';
+  const ext =
+    /\.(glb|gltf|obj|stl|fbx|ply|usdz|zip)$/i.exec(clean)?.[1]?.toLowerCase() ??
+    'glb';
+  return `3d-model-${index + 1}.${ext}`;
+}
+
+async function downloadThreeDAssets(
+  assets: string[],
+  cwd?: string,
+): Promise<{
+  downloaded: Array<{ source: string; path: string }>;
+  downloadErrors: Array<{ source: string; error: string }>;
+}> {
+  const downloaded: Array<{ source: string; path: string }> = [];
+  const downloadErrors: Array<{ source: string; error: string }> = [];
+
+  for (const [index, source] of assets.entries()) {
+    if (!/^https?:\/\//i.test(source)) continue;
+    try {
+      const saved = await downloadModelAsset(source, {
+        cwd,
+        fileName: threeDAssetFileName(source, index),
+      });
+      downloaded.push({ source, path: saved.path });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message === 'NO_BACKEND') continue;
+      downloadErrors.push({ source, error: message });
+    }
+  }
+
+  return { downloaded, downloadErrors };
+}
+
+function threeDFailureHint(message: string): string {
+  if (
+    message === 'NO_READY_THREE_D_PROVIDER' ||
+    message === 'THREE_D_GENERATION_DISABLED' ||
+    message.startsWith('THREE_D_PROVIDER_NOT_READY') ||
+    /api key is missing/i.test(message)
+  ) {
+    return '请在设置 > 3D 渠道中配置可用的商用或免费 Provider。';
+  }
+  if (/^(?:401\b|.*Unauthorized)/i.test(message)) {
+    return '请检查 3D Provider API Key 是否有效。';
+  }
+  if (/^(?:402\b|.*Payment Required)|credits?/i.test(message)) {
+    return '请检查 3D Provider 余额或 credits。';
+  }
+  if (/^429\b|Too Many Requests/i.test(message)) {
+    return '请求过频，请稍后重试。';
+  }
+  return '配置已读取；请检查 3D Provider 返回错误、模型参数、额度或网络。';
 }
 
 function untitledSessionTitle(locale: Locale): string {
@@ -2034,10 +2263,12 @@ async function activateHistorySession(
   workspaceId?: string,
   options?: { onlyIfActive?: WorkflowSessionKey },
 ): Promise<void> {
+  const navigationVersion = beginHistoryNavigation();
   const state = useStore.getState();
   const targetWorkspaceId = workspaceId ?? state.activeWorkspaceId ?? undefined;
   if (!state.historyReady || !targetWorkspaceId) {
     useStore.setState((s) => {
+      if (!isLatestHistoryNavigation(navigationVersion)) return s;
       if (
         options?.onlyIfActive &&
         !sameSessionKey(activeWorkflowSessionKey(s), options.onlyIfActive)
@@ -2110,6 +2341,7 @@ async function activateHistorySession(
   }
 
   const record = await historyStore.getSession(targetWorkspaceId, sessionId);
+  if (!isLatestHistoryNavigation(navigationVersion)) return;
   if (!record) return;
   const session = sessionFromRecord(record);
 
@@ -2152,6 +2384,7 @@ async function activateHistorySession(
   );
   let activated = false;
   useStore.setState((s) => {
+    if (!isLatestHistoryNavigation(navigationVersion)) return s;
     if (
       options?.onlyIfActive &&
       !sameSessionKey(activeWorkflowSessionKey(s), options.onlyIfActive)
@@ -2218,7 +2451,14 @@ async function activateHistorySession(
       mode: liveRun ? 'running' : 'design',
     };
   });
-  if (!activated) return;
+  if (!activated || !isLatestHistoryNavigation(navigationVersion)) return;
+  const current = useStore.getState();
+  if (
+    current.activeWorkspaceId !== targetWorkspaceId ||
+    current.activeSessionId !== session.id
+  ) {
+    return;
+  }
   await historyStore.patchConfig({
     lastActiveWorkspaceId: targetWorkspaceId,
     lastActiveSessionId: session.id,
@@ -2642,13 +2882,16 @@ async function runScheduledTaskHistorySession(
 async function activateWorkspacePath(path: string): Promise<void> {
   const trimmed = normalizeWorkspacePath(path);
   if (!trimmed) return;
+  const navigationVersion = beginHistoryNavigation();
   const state = useStore.getState();
   if (!state.historyReady) return;
 
   const workspace = await historyStore.resolveWorkspaceByPath(trimmed);
+  if (!isLatestHistoryNavigation(navigationVersion)) return;
   let sessions = visibleChatSessionSummaries(
     await historyStore.listSessions(workspace.id),
   );
+  if (!isLatestHistoryNavigation(navigationVersion)) return;
   let active = sessions[0];
   if (!active) {
     const record = await historyStore.createSession({
@@ -2656,15 +2899,19 @@ async function activateWorkspacePath(path: string): Promise<void> {
       isWorkflow: false,
       messages: [],
     });
+    if (!isLatestHistoryNavigation(navigationVersion)) return;
     active = summaryFromRecord(record);
     sessions = [summaryFromRecord(record), ...sessions];
   }
 
   const workspaces = await historyStore.listWorkspaces();
+  if (!isLatestHistoryNavigation(navigationVersion)) return;
   const sessionTree = await loadSessionTree(workspaces);
+  if (!isLatestHistoryNavigation(navigationVersion)) return;
   const activeRecord = active
     ? await historyStore.getSession(workspace.id, active.id)
     : null;
+  if (!isLatestHistoryNavigation(navigationVersion)) return;
   const activeRecordIsSimpleChat =
     activeRecord?.workflow?.meta?.simple === true;
   const workflow =
@@ -2680,6 +2927,7 @@ async function activateWorkspacePath(path: string): Promise<void> {
     activeRecord?.meta,
   );
   useStore.setState((s) => {
+    if (!isLatestHistoryNavigation(navigationVersion)) return s;
     const sessionKey = {
       workspaceId: workspace.id,
       sessionId: active?.id ?? null,
@@ -2717,6 +2965,14 @@ async function activateWorkspacePath(path: string): Promise<void> {
       ...composerDraftPatchForSession(s, sessionKey),
     };
   });
+  if (!isLatestHistoryNavigation(navigationVersion)) return;
+  const current = useStore.getState();
+  if (
+    current.activeWorkspaceId !== workspace.id ||
+    current.activeSessionId !== (active?.id ?? null)
+  ) {
+    return;
+  }
   await historyStore.patchConfig({
     lastActiveWorkspaceId: workspace.id,
     lastActiveSessionId: active?.id,
@@ -2936,18 +3192,14 @@ function renameWorkflowInLiveChannels(
 const persisted = loadComposer();
 const seedComposer: ComposerSettings = (() => {
   const c = persisted?.composer ?? defaultComposer;
-  // Backfill modelStrategy + imageMode for legacy persisted composers that
-  // predate those fields.
-  const withStrategy: ComposerSettings = {
-    ...c,
-    modelStrategy: c.modelStrategy ?? defaultComposer.modelStrategy,
-    imageMode: c.imageMode ?? defaultComposer.imageMode,
-  };
+  // Backfill fields for legacy persisted composers that predate them.
+  const withStrategy = normalizeComposerSettings(c);
   const valid = modelOptions.some((o) => o.id === withStrategy.model);
   return valid ? withStrategy : { ...withStrategy, model: defaultComposer.model };
 })();
 const seedLocale = loadLocale();
 const seedPromptAutoTranslate = loadPromptAutoTranslate();
+const seedGameExpertSettings = loadGameExpertSettings();
 const seedAppearance = loadAppearance();
 
 // Cold-start directly into the plain chat surface. Hidden workflow snapshots
@@ -3059,6 +3311,7 @@ export const useStore = create<StoreState>((set, get) => ({
   promptAutoTranslate: seedPromptAutoTranslate,
   personalInstructionsByModel: seedPersonalInstructionsByModel,
   personalInstructions: seedPersonalInstructions,
+  gameExpertSettings: seedGameExpertSettings,
   appearance: seedAppearance,
 
   // Composer settings seeded from the sample option lists, overlaid with any
@@ -3116,6 +3369,17 @@ export const useStore = create<StoreState>((set, get) => ({
           personalInstructionsByModel,
         }),
       };
+    });
+  },
+
+  setGameExpertSettings: (patch) => {
+    set((state) => {
+      const gameExpertSettings = normalizeGameExpertSettings({
+        ...state.gameExpertSettings,
+        ...patch,
+      });
+      saveGameExpertSettings(gameExpertSettings);
+      return { gameExpertSettings };
     });
   },
 
@@ -3647,6 +3911,14 @@ export const useStore = create<StoreState>((set, get) => ({
     startImageGenerationTurn(text, options);
   },
 
+  generateMusicPrompt: (text, options = {}) => {
+    startMusicGenerationTurn(text, options);
+  },
+
+  generateThreeDPrompt: (text, options = {}) => {
+    startThreeDGenerationTurn(text, options);
+  },
+
   appendChatNote: (text, role = 'assistant') => {
     const msg: Message = {
       id: shortId('m'),
@@ -3659,9 +3931,16 @@ export const useStore = create<StoreState>((set, get) => ({
     return msg.id;
   },
 
-  sendPrompt: (text) => {
+  sendPrompt: (text, options) => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    // Game experts / producer orchestration are now explicit-only: they never
+    // auto-fire from chat text. The host opts in by passing forceGameExperts
+    // (wired to the multilingual `/game` slash command in AIDock). When the
+    // user drilled into specific experts via a hierarchical path (e.g.
+    // /游戏专家/编程/引擎程序 or /引擎程序), gameExpertIds pins exactly those.
+    const forceGameExperts = options?.forceGameExperts === true;
+    const pinnedGameExpertIds = options?.gameExpertIds ?? [];
     const state = useStore.getState();
     if (isWorkflowReadOnly(state)) return;
     // Image generation is routed explicitly (the /image-mode-* sticky mode and
@@ -4200,11 +4479,36 @@ ${previousReply.slice(0, 4000)}
       ),
       gatewaySelection.adapter,
     );
+    const gameAssetChannels = {
+      image: preferredReadyImageProviderId() != null,
+      music: preferredReadyMusicProviderId() != null,
+      threeD: preferredReadyThreeDProviderId() != null,
+    };
+    // Explicit-only routing (方案 A 之上的收紧)：游戏专家 / 制作人总控不再从
+    // 聊天文本自动触发，只有用户通过 /game（或分层路径）显式调用时才注入。
+    // - 指定了具体专家(分层路径命中) → 直接用专家融合，固定为这些专家。
+    // - 仅 /game 整体调用 → 完整/多阶段需求走制作人总控，其余走专家融合。
+    const hasPinnedExperts = pinnedGameExpertIds.length > 0;
+    const gameExpertBlock = !forceGameExperts
+      ? ''
+      : hasPinnedExperts
+        ? buildGameExpertPrompt(trimmed, state.gameExpertSettings, gameAssetChannels, {
+            force: true,
+            pinnedExpertIds: pinnedGameExpertIds,
+          })
+        : shouldUseProducer(trimmed)
+          ? buildProducerPrompt(trimmed, state.gameExpertSettings, gameAssetChannels, {
+              force: true,
+            })
+          : buildGameExpertPrompt(trimmed, state.gameExpertSettings, gameAssetChannels, {
+              force: true,
+            });
     const unifiedBase =
       UNIFIED_SYSTEM +
       modelStrategyGuidance(state.composer.modelStrategy) +
       languageAdaptationPrompt(state.locale) +
-      personalBlock;
+      personalBlock +
+      gameExpertBlock;
     const clarifyingSystem =
       `${unifiedBase}\n\n${INTERACTION_PROTOCOL}\n` +
       `（交互澄清模式：用户明确要求你先澄清/确认/反问时，才使用上面的交互块提一个关键问题；用户回答后不要继续追问，必须把回答吸收到 workflow 蓝图，并输出中文说明 + \`\`\`json 蓝图。）`;
@@ -4418,7 +4722,7 @@ ${previousReply.slice(0, 4000)}
     if (simpleMode) {
       void (async () => {
         const chatSystem =
-          `${SIMPLE_CHAT_SYSTEM}${languageAdaptationPrompt(state.locale)}${personalBlock}`;
+          `${SIMPLE_CHAT_SYSTEM}${languageAdaptationPrompt(state.locale)}${personalBlock}${gameExpertBlock}`;
         // Multi-turn context: the gateway/CLI takes a single string, so fold the
         // prior conversation (text messages only, skipping system notices) into
         // the prompt as a transcript, then the current question. Keeps a bounded
@@ -4864,6 +5168,48 @@ ${previousReply.slice(0, 4000)}
       return { composer, composerBySession, workspaceHistory };
     });
     void activateWorkspacePath(trimmed);
+  },
+
+  // Remove a folder from the workspace history. If it was the active
+  // workspace, the active selection is cleared (falls back to "no folder").
+  removeWorkspace: (path) => {
+    const key = workspacePathKey(path);
+    if (!key) return;
+    if (isActiveAiEditingSession(useStore.getState())) return;
+    set((state) => {
+      const workspaceHistory = state.workspaceHistory.filter(
+        (p) => workspacePathKey(p) !== key,
+      );
+      if (workspaceHistory.length === state.workspaceHistory.length) {
+        return state;
+      }
+      const removingActive = workspacePathKey(state.composer.workspace) === key;
+      const composer = removingActive
+        ? { ...state.composer, workspace: '' }
+        : state.composer;
+      if (!removingActive) {
+        saveComposerSoon({
+          composer: state.composer,
+          composerBySession: state.composerBySession,
+          workspaceHistory,
+        });
+        return { workspaceHistory };
+      }
+      const snapshot: SessionComposerSettings = {
+        composer,
+        gatewaySelection: workflowDefaultGatewaySelection(
+          state.workflow,
+          composer.model,
+        ),
+      };
+      const composerBySession = rememberSessionComposer(
+        { ...state, composer },
+        state.composerBySession,
+        snapshot,
+      );
+      saveComposerSoon({ composer, composerBySession, workspaceHistory });
+      return { composer, composerBySession, workspaceHistory };
+    });
   },
 
   // ── Graph editing ──────────────────────────────────────────────────────
@@ -5760,12 +6106,163 @@ const IMAGE_PROMPT_SYSTEM = `你是专业的"生图提示词工程师"。用户�
 - 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
 - 只描述要画什么，不要写"请生成/帮我画"之类的指令性措辞。`;
 
+const MUSIC_PROMPT_SYSTEM = `你是专业的"音乐生成提示词工程师"。用户会给出一句关于想要生成的音乐、歌曲、BGM 或音频的描述，你要把它扩写成一段高质量、可直接喂给音乐生成模型的提示词。
+要求：
+- 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
+- 补全音乐类型、情绪、速度、乐器、编曲层次、段落结构、混音质感、是否有人声/歌词等关键要素。
+- 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
+- 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
+- 不要要求模仿现役艺人、受版权歌曲或具体受保护歌词；用可授权的风格描述替代。
+- 只描述要生成什么音乐，不要写"请生成/帮我写"之类的指令性措辞。`;
+
+const THREE_D_PROMPT_SYSTEM = `你是专业的"3D模型生成提示词工程师"。用户会给出一句关于想要生成的 3D 模型、游戏资产、道具、角色或产品模型的描述，你要把它扩写成一段高质量、可直接喂给文生 3D 模型的提示词。
+要求：
+- 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
+- 补全主体形体、比例、轮廓、结构细节、材质、PBR 贴图、拓扑/面数倾向、可用视角和导出目标等关键要素。
+- 让模型聚焦单个可用 3D 资产；避免复杂背景、场景叙事、摄影机语言和纯 2D 画面描述。
+- 骨骼/动画只用于能自然绑定的角色、生物、可动机器人或机械臂；石头、家具、武器、建筑、产品等静态资产不要写骨骼或动画。
+- 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
+- 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
+- 只描述要生成什么 3D 模型，不要写"请生成/帮我建模"之类的指令性措辞。`;
+
+type GenerationPromptMode = 'image' | 'music' | 'threeD';
+
+function generationModeStartedAt(
+  composer: ComposerSettings,
+  mode: GenerationPromptMode,
+): number | null {
+  const value =
+    mode === 'image'
+      ? composer.imageModeStartedAt
+      : mode === 'music'
+        ? composer.musicModeStartedAt
+        : composer.threeDModeStartedAt;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function generationModeActive(
+  composer: ComposerSettings,
+  mode: GenerationPromptMode,
+): boolean {
+  return mode === 'image'
+    ? composer.imageMode
+    : mode === 'music'
+      ? composer.musicMode
+      : composer.threeDMode;
+}
+
+function generationModeEnteredText(mode: GenerationPromptMode, text: string): boolean {
+  if (mode === 'image') return /已进入生图模式|image mode on/i.test(text);
+  if (mode === 'music') return /已进入音乐模式|music mode on/i.test(text);
+  return /已进入\s*Mesh\s*模式|mesh mode on/i.test(text);
+}
+
+function generationModeExitedText(mode: GenerationPromptMode, text: string): boolean {
+  if (mode === 'image') return /已退出生图模式|image mode off/i.test(text);
+  if (mode === 'music') return /已退出音乐模式|music mode off/i.test(text);
+  return /已退出\s*Mesh\s*模式|mesh mode off/i.test(text);
+}
+
+function inferGenerationModeStartedAt(
+  messages: readonly Message[],
+  mode: GenerationPromptMode,
+): number | null {
+  let startedAt: number | null = null;
+  for (const message of messages) {
+    if (message.role !== 'system') continue;
+    if (generationModeEnteredText(mode, message.text)) {
+      startedAt = message.createdAt;
+    } else if (generationModeExitedText(mode, message.text)) {
+      startedAt = null;
+    }
+  }
+  return startedAt;
+}
+
+function stripGenerationCommand(
+  mode: GenerationPromptMode,
+  text: string,
+): string {
+  if (mode === 'image') return stripImageCommand(text);
+  if (mode === 'music') return stripMusicCommand(text);
+  return stripThreeDCommand(text);
+}
+
+function normalizeGenerationTurn(
+  mode: GenerationPromptMode,
+  text: string,
+): string {
+  return stripGenerationCommand(mode, text)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function modeContextPrompt(
+  state: Pick<StoreState, 'composer' | 'messages'>,
+  mode: GenerationPromptMode,
+  currentPrompt: string,
+): string {
+  const current = normalizeGenerationTurn(mode, currentPrompt);
+  if (!generationModeActive(state.composer, mode)) {
+    return current;
+  }
+  const startedAt =
+    generationModeStartedAt(state.composer, mode) ??
+    inferGenerationModeStartedAt(state.messages, mode) ??
+    0;
+
+  const priorTurns = state.messages
+    .filter(
+      (message) =>
+        message.role === 'user' &&
+        message.createdAt >= startedAt &&
+        message.text.trim(),
+    )
+    .map((message) => normalizeGenerationTurn(mode, message.text))
+    .filter(Boolean);
+  const turns =
+    priorTurns[priorTurns.length - 1] === current
+      ? priorTurns
+      : [...priorTurns, current];
+  if (turns.length <= 1) return current;
+
+  return [
+    '本次生成模式内的连续需求如下，请合并成当前这一次的最终生成需求。',
+    '规则：后面的补充优先；除非最新输入明确换主体，否则保留前文主体和约束。',
+    ...turns.map((turn, index) => `${index + 1}. ${turn}`),
+  ].join('\n');
+}
+
 /** Strip code fences / labels / surrounding quotes the model may wrap around the prompt. */
 function cleanGeneratedImagePrompt(raw: string): string {
   let text = raw.trim();
   const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
   if (fence) text = fence[1].trim();
   text = text.replace(/^(?:生图提示词|提示词|prompt)\s*[:：]\s*/iu, '').trim();
+  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
+  if (quoted) text = quoted[1].trim();
+  return text;
+}
+
+function cleanGeneratedMusicPrompt(raw: string): string {
+  let text = raw.trim();
+  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
+  if (fence) text = fence[1].trim();
+  text = text
+    .replace(/^(?:音乐提示词|作曲提示词|提示词|prompt)\s*[:：]\s*/iu, '')
+    .trim();
+  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
+  if (quoted) text = quoted[1].trim();
+  return text;
+}
+
+function cleanGeneratedThreeDPrompt(raw: string): string {
+  let text = raw.trim();
+  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
+  if (fence) text = fence[1].trim();
+  text = text
+    .replace(/^(?:3d\s*模型提示词|三维模型提示词|建模提示词|提示词|prompt)\s*[:：]\s*/iu, '')
+    .trim();
   const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
   if (quoted) text = quoted[1].trim();
   return text;
@@ -5842,6 +6339,138 @@ async function refineImagePromptViaModel(
   return null;
 }
 
+async function refineMusicPromptViaModel(
+  ch: AiEditChannel,
+  userText: string,
+  codingSelection: GatewaySelection,
+  permission: string,
+  onProgress: (live: string) => void,
+): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
+  const userContent = `请把下面的音乐需求改写成一段高质量的音乐生成提示词：\n\n${userText}`;
+  const direct = resolveDirectGatewayRoute(codingSelection);
+  if (direct) {
+    let full = '';
+    const text = await completeGatewayText({
+      route: direct,
+      system: MUSIC_PROMPT_SYSTEM,
+      userContent,
+      maxTokens: 1024,
+      signal: ch.abortController.signal,
+      onDelta: (chunk) => {
+        full += chunk;
+        onProgress(full);
+      },
+    });
+    return {
+      prompt: cleanGeneratedMusicPrompt(full || text),
+      routeLine: gatewayRouteLine(direct),
+      routeHeader: gatewayRouteHeader(direct),
+    };
+  }
+  if (isTauri()) {
+    if (isFreeChannelSelection(codingSelection)) {
+      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
+    }
+    const cli = await resolveCliGatewayRoute(codingSelection);
+    const runId = makeCliRunId();
+    ch.cliRunIds.add(runId);
+    try {
+      let live = '';
+      const text = await aiEditViaCli(
+        `${MUSIC_PROMPT_SYSTEM}\n\n${userContent}`,
+        cli.adapter,
+        {
+          permission,
+          model: cli.model,
+          cliCommand: cli.cliCommand,
+          env: cli.env,
+          runId,
+          onProgress: (chunk) => {
+            live += chunk;
+            onProgress(live);
+          },
+        },
+      );
+      return {
+        prompt: cleanGeneratedMusicPrompt(text || live),
+        routeLine: gatewayRouteLine(cli),
+        routeHeader: gatewayRouteHeader(cli),
+      };
+    } finally {
+      ch.cliRunIds.delete(runId);
+    }
+  }
+  return null;
+}
+
+async function refineThreeDPromptViaModel(
+  ch: AiEditChannel,
+  userText: string,
+  codingSelection: GatewaySelection,
+  permission: string,
+  onProgress: (live: string) => void,
+): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
+  const userContent = `请把下面的 3D 模型需求改写成一段高质量的文生 3D 提示词。
+${threeDRiggingPromptGuidance(userText)}
+
+原始需求：
+${userText}`;
+  const direct = resolveDirectGatewayRoute(codingSelection);
+  if (direct) {
+    let full = '';
+    const text = await completeGatewayText({
+      route: direct,
+      system: THREE_D_PROMPT_SYSTEM,
+      userContent,
+      maxTokens: 1024,
+      signal: ch.abortController.signal,
+      onDelta: (chunk) => {
+        full += chunk;
+        onProgress(full);
+      },
+    });
+    return {
+      prompt: cleanGeneratedThreeDPrompt(full || text),
+      routeLine: gatewayRouteLine(direct),
+      routeHeader: gatewayRouteHeader(direct),
+    };
+  }
+  if (isTauri()) {
+    if (isFreeChannelSelection(codingSelection)) {
+      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
+    }
+    const cli = await resolveCliGatewayRoute(codingSelection);
+    const runId = makeCliRunId();
+    ch.cliRunIds.add(runId);
+    try {
+      let live = '';
+      const text = await aiEditViaCli(
+        `${THREE_D_PROMPT_SYSTEM}\n\n${userContent}`,
+        cli.adapter,
+        {
+          permission,
+          model: cli.model,
+          cliCommand: cli.cliCommand,
+          env: cli.env,
+          runId,
+          onProgress: (chunk) => {
+            live += chunk;
+            onProgress(live);
+          },
+        },
+      );
+      return {
+        prompt: cleanGeneratedThreeDPrompt(text || live),
+        routeLine: gatewayRouteLine(cli),
+        routeHeader: gatewayRouteHeader(cli),
+      };
+    } finally {
+      ch.cliRunIds.delete(runId);
+    }
+  }
+  return null;
+}
+
 function startImageGenerationTurn(
   text: string,
   options: { providerId?: ImageProviderId; model?: string } = {},
@@ -5850,6 +6479,7 @@ function startImageGenerationTurn(
   if (!prompt) return;
   const state = useStore.getState();
   if (isWorkflowReadOnly(state)) return;
+  const generationPrompt = modeContextPrompt(state, 'image', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
   const settings = loadImageGenerationSettings();
   if (!settings.enabled) return;
@@ -5954,12 +6584,12 @@ function startImageGenerationTurn(
       // prompt. When no text-model backend is reachable (browser without an API
       // key, tests) refineImagePromptViaModel returns null and we fall back to
       // the raw user text so image generation still works end to end.
-      let imagePrompt = prompt;
+      let imagePrompt = generationPrompt;
       let refineHeader = '';
       try {
         const refined = await refineImagePromptViaModel(
           ch,
-          prompt,
+          generationPrompt,
           codingSelection,
           codingPermission,
           (live) => {
@@ -5978,7 +6608,7 @@ function startImageGenerationTurn(
         if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
         // Prompt authoring failed (model error/timeout). Degrade to the raw
         // user text rather than failing the whole turn.
-        imagePrompt = prompt;
+        imagePrompt = generationPrompt;
       }
       if (!aiEditRegistered(ch)) return;
 
@@ -6009,6 +6639,361 @@ function startImageGenerationTurn(
       const msg = err instanceof Error ? err.message : String(err);
       setAssistant(
         `${elapsed()} · 失败\n✗ 图片生成失败: ${msg}\n\n请在设置 > 生图中配置可用的图片 Provider，或切换到本地 ComfyUI。`,
+        true,
+      );
+      syncAndPersistSessionRunStatus(sessionKey, 'error');
+    } finally {
+      removeAiEditChannel(ch);
+    }
+  })();
+}
+
+function startMusicGenerationTurn(
+  text: string,
+  options: { providerId?: MusicProviderId; model?: string } = {},
+): void {
+  const prompt = stripMusicCommand(text);
+  if (!prompt) return;
+  const state = useStore.getState();
+  if (isWorkflowReadOnly(state)) return;
+  const generationPrompt = modeContextPrompt(state, 'music', prompt);
+  const sessionKey = activeWorkflowSessionKey(state);
+  const settings = loadMusicGenerationSettings();
+  if (!settings.enabled) return;
+  const providerId = options.providerId ?? preferredReadyMusicProviderId(settings);
+  const codingSelection = workflowDefaultGatewaySelection(
+    state.workflow,
+    state.composer.model,
+  );
+  const codingPermission = state.composer.permission || 'full';
+
+  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
+
+  const now = Date.now();
+  const providerLabel = providerId
+    ? musicProviderById(providerId).label
+    : 'Music generation';
+  const provider = providerId ? musicProviderById(providerId) : null;
+  const model = providerId
+    ? options.model?.trim() || musicProviderModel(providerId, settings)
+    : options.model?.trim() || '';
+  const userMsg: Message = {
+    id: shortId('m'),
+    role: 'user',
+    text,
+    createdAt: now,
+  };
+  const assistantId = shortId('m');
+  const assistantMsg: Message = {
+    id: assistantId,
+    role: 'assistant',
+    text: `⚙ 作曲：${providerLabel}${model ? ` · 模型：${model}` : ''}\n① 正在让模型撰写音乐提示词…`,
+    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
+    createdAt: now + 1,
+  };
+  const promptUpdate = applyPromptTitle(state, prompt, now);
+  const activeSession = sessionForKey(state, sessionKey);
+  const simpleMode = promptUpdate.workflow.meta?.simple === true;
+  const baseMessages = state.messages;
+  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
+  const ch: AiEditChannel = {
+    key: chatTurnKey(chSessionKey, userMsg.id),
+    sessionKey: chSessionKey,
+    workspaceId: sessionKey.workspaceId,
+    sessionId: sessionKey.sessionId,
+    workflow: promptUpdate.workflow,
+    messages: [...baseMessages, userMsg, assistantMsg],
+    cliRunIds: new Set<string>(),
+    abortController: new AbortController(),
+    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
+    chat: true,
+    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
+  };
+
+  const setAssistant = (textValue: string, persist: boolean) => {
+    if (!aiEditRegistered(ch)) return;
+    ch.messages = ch.messages.map((message) =>
+      message.id === assistantId
+        ? {
+            ...message,
+            text: textValue,
+            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
+          }
+        : message,
+    );
+    aiEditCommitMessages(ch, persist);
+  };
+
+  addAiEditChannel(ch);
+  if (aiEditViewActive(ch)) {
+    useStore.setState({
+      messages: ch.messages,
+      sessions: promptUpdate.sessions,
+      sessionTree: promptUpdate.sessionTree,
+      workflow: ch.workflow,
+    });
+  }
+  updateAiEditSessionSummary(ch);
+  if (ch.workspaceId && ch.sessionId) {
+    void historyStore
+      .updateSession(ch.workspaceId, ch.sessionId, {
+        messages: ch.messages,
+        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
+        meta: { runStatus: 'running' },
+      })
+      .catch(() => {});
+  }
+  syncAndPersistSessionRunStatus(sessionKey, 'running');
+
+  void (async () => {
+    const startedAt = Date.now();
+    const elapsed = () =>
+      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
+        Date.now() - startedAt,
+      )}`;
+    try {
+      let musicPrompt = generationPrompt;
+      let refineHeader = '';
+      try {
+        const refined = await refineMusicPromptViaModel(
+          ch,
+          generationPrompt,
+          codingSelection,
+          codingPermission,
+          (live) => {
+            if (!aiEditRegistered(ch)) return;
+            setAssistant(
+              `${elapsed()}\n① 撰写音乐提示词中…\n\n${live.trim() || '⟳ 生成中…'}`,
+              false,
+            );
+          },
+        );
+        if (refined && refined.prompt) {
+          musicPrompt = refined.prompt;
+          refineHeader = refined.routeHeader;
+        }
+      } catch (err) {
+        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
+        musicPrompt = generationPrompt;
+      }
+      if (!aiEditRegistered(ch)) return;
+      const promptModelLine = refineHeader
+        ? `✎ 提示词模型：${refineHeader}\n`
+        : '';
+      setAssistant(
+        `${elapsed()}\n${promptModelLine}② 已生成提示词，正在调用${
+          provider?.local ? '本地音乐模型' : '音乐 API'
+        }…\n\n音乐提示词：${musicPrompt}`,
+        false,
+      );
+      const result = await generateMusic(
+        {
+          prompt: musicPrompt,
+          providerId: options.providerId,
+          model: options.model,
+          targetDurationSeconds:
+            musicDurationSecondsFromPrompt(musicPrompt) ?? undefined,
+          signal: ch.abortController.signal,
+        },
+        settings,
+      );
+      setAssistant(`${elapsed()}\n${promptModelLine}${musicResultMarkdown(result)}`, true);
+      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
+      syncAndPersistSessionRunStatus(sessionKey, 'success');
+    } catch (err) {
+      if (!aiEditRegistered(ch)) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setAssistant(
+        `${elapsed()} · 失败\n✗ 音乐生成失败: ${msg}\n\n请在设置 > 音乐渠道中配置可用的商用或免费 Provider。`,
+        true,
+      );
+      syncAndPersistSessionRunStatus(sessionKey, 'error');
+    } finally {
+      removeAiEditChannel(ch);
+    }
+  })();
+}
+
+function startThreeDGenerationTurn(
+  text: string,
+  options: { providerId?: ThreeDProviderId; model?: string } = {},
+): void {
+  const prompt = stripThreeDCommand(text);
+  if (!prompt) return;
+  const state = useStore.getState();
+  if (isWorkflowReadOnly(state)) return;
+  const generationPrompt = modeContextPrompt(state, 'threeD', prompt);
+  const sessionKey = activeWorkflowSessionKey(state);
+  const settings = loadThreeDGenerationSettings();
+  if (!settings.enabled) return;
+  const providerId = options.providerId ?? preferredReadyThreeDProviderId(settings);
+  const codingSelection = workflowDefaultGatewaySelection(
+    state.workflow,
+    state.composer.model,
+  );
+  const codingPermission = state.composer.permission || 'full';
+
+  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
+
+  const now = Date.now();
+  const providerLabel = providerId
+    ? threeDProviderById(providerId).label
+    : '3D generation';
+  const provider = providerId ? threeDProviderById(providerId) : null;
+  const model = providerId
+    ? options.model?.trim() || threeDProviderModel(providerId, settings)
+    : options.model?.trim() || '';
+  const rigging = assessThreeDRigging(generationPrompt);
+  const userMsg: Message = {
+    id: shortId('m'),
+    role: 'user',
+    text,
+    createdAt: now,
+  };
+  const assistantId = shortId('m');
+  const assistantMsg: Message = {
+    id: assistantId,
+    role: 'assistant',
+    text: `⚙ 3D：${providerLabel}${model ? ` · 模型：${model}` : ''}\n骨骼：${
+      rigging.enabled
+        ? `可绑骨资产，默认预览 ${rigging.defaultAnimations.join('、')}${
+            rigging.requestedAnimations.length
+              ? `，额外动作 ${rigging.requestedAnimations.join('、')}${
+                  rigging.needsAnimationSearch ? ' 需匹配动画库' : ''
+                }`
+              : ''
+          }`
+        : '静态资产，跳过'
+    }\n① 正在让模型撰写 3D 提示词…`,
+    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
+    createdAt: now + 1,
+  };
+  const promptUpdate = applyPromptTitle(state, prompt, now);
+  const activeSession = sessionForKey(state, sessionKey);
+  const simpleMode = promptUpdate.workflow.meta?.simple === true;
+  const baseMessages = state.messages;
+  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
+  const ch: AiEditChannel = {
+    key: chatTurnKey(chSessionKey, userMsg.id),
+    sessionKey: chSessionKey,
+    workspaceId: sessionKey.workspaceId,
+    sessionId: sessionKey.sessionId,
+    workflow: promptUpdate.workflow,
+    messages: [...baseMessages, userMsg, assistantMsg],
+    cliRunIds: new Set<string>(),
+    abortController: new AbortController(),
+    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
+    chat: true,
+    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
+  };
+
+  const setAssistant = (textValue: string, persist: boolean) => {
+    if (!aiEditRegistered(ch)) return;
+    ch.messages = ch.messages.map((message) =>
+      message.id === assistantId
+        ? {
+            ...message,
+            text: textValue,
+            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
+          }
+        : message,
+    );
+    aiEditCommitMessages(ch, persist);
+  };
+
+  addAiEditChannel(ch);
+  if (aiEditViewActive(ch)) {
+    useStore.setState({
+      messages: ch.messages,
+      sessions: promptUpdate.sessions,
+      sessionTree: promptUpdate.sessionTree,
+      workflow: ch.workflow,
+    });
+  }
+  updateAiEditSessionSummary(ch);
+  if (ch.workspaceId && ch.sessionId) {
+    void historyStore
+      .updateSession(ch.workspaceId, ch.sessionId, {
+        messages: ch.messages,
+        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
+        meta: { runStatus: 'running' },
+      })
+      .catch(() => {});
+  }
+  syncAndPersistSessionRunStatus(sessionKey, 'running');
+
+  void (async () => {
+    const startedAt = Date.now();
+    const elapsed = () =>
+      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
+        Date.now() - startedAt,
+      )}`;
+    try {
+      let threeDPrompt = generationPrompt;
+      let refineHeader = '';
+      try {
+        const refined = await refineThreeDPromptViaModel(
+          ch,
+          generationPrompt,
+          codingSelection,
+          codingPermission,
+          (live) => {
+            if (!aiEditRegistered(ch)) return;
+            setAssistant(
+              `${elapsed()}\n① 撰写 3D 提示词中…\n\n${live.trim() || '⟳ 生成中…'}`,
+              false,
+            );
+          },
+        );
+        if (refined && refined.prompt) {
+          threeDPrompt = refined.prompt;
+          refineHeader = refined.routeHeader;
+        }
+      } catch {
+        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
+        threeDPrompt = generationPrompt;
+      }
+      if (!aiEditRegistered(ch)) return;
+      const promptModelLine = refineHeader
+        ? `✎ 提示词模型：${refineHeader}\n`
+        : '';
+      setAssistant(
+        `${elapsed()}\n${promptModelLine}② 已生成提示词，正在调用${
+          provider?.local ? '本地 3D 模型' : '3D API'
+        }…\n\n3D 提示词：${threeDPrompt}`,
+        false,
+      );
+      const result = await generateThreeD(
+        {
+          prompt: threeDPrompt,
+          providerId: options.providerId,
+          model: options.model,
+          signal: ch.abortController.signal,
+        },
+        settings,
+      );
+      setAssistant(
+        `${elapsed()}\n${promptModelLine}③ 3D 模型已生成，正在下载到本地缓存…\n\n3D 提示词：${threeDPrompt}`,
+        false,
+      );
+      const downloads = await downloadThreeDAssets(
+        result.assets,
+        state.composer.workspace || undefined,
+      );
+      setAssistant(
+        `${elapsed()}\n${promptModelLine}${threeDResultMarkdown({
+          ...result,
+          ...downloads,
+        })}`,
+        true,
+      );
+      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
+      syncAndPersistSessionRunStatus(sessionKey, 'success');
+    } catch (err) {
+      if (!aiEditRegistered(ch)) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setAssistant(
+        `${elapsed()} · 失败\n✗ 3D 模型生成失败: ${msg}\n\n${threeDFailureHint(msg)}`,
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');

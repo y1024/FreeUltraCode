@@ -24,6 +24,8 @@ export interface WorkspaceSelectProps {
   history: string[];
   /** Commit a chosen path (sets current + records in history). */
   onSelect: (path: string) => void;
+  /** Remove a folder from history (optional). */
+  onRemove?: (path: string) => void;
   disabled?: boolean;
   className?: string;
 }
@@ -32,6 +34,7 @@ export default function WorkspaceSelect({
   value,
   history,
   onSelect,
+  onRemove,
   disabled = false,
   className,
 }: WorkspaceSelectProps) {
@@ -111,7 +114,7 @@ export default function WorkspaceSelect({
                 const active =
                   valueKey !== '' && workspacePathKey(path) === valueKey;
                 return (
-                  <li key={workspacePathKey(path)}>
+                  <li key={workspacePathKey(path)} className="group relative">
                     <button
                       type="button"
                       role="option"
@@ -123,7 +126,8 @@ export default function WorkspaceSelect({
                         setOpen(false);
                       }}
                       className={cn(
-                        'flex w-full items-center gap-2 whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors',
+                        'flex w-full items-center gap-2 whitespace-nowrap py-1.5 pl-3 text-left text-xs transition-colors',
+                        onRemove ? 'pr-8' : 'pr-3',
                         active
                           ? 'bg-border-soft text-fg'
                           : 'text-fg-dim hover:bg-border-soft hover:text-fg',
@@ -141,6 +145,21 @@ export default function WorkspaceSelect({
                         {basename(path)}
                       </span>
                     </button>
+                    {onRemove && (
+                      <button
+                        type="button"
+                        title={t(locale, 'workspace.removeFolder')}
+                        aria-label={t(locale, 'workspace.removeFolder')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (disabled) return;
+                          onRemove(path);
+                        }}
+                        className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-fg-faint opacity-0 transition-opacity hover:bg-border hover:text-fg group-hover:opacity-100 focus:opacity-100"
+                      >
+                        <span className="text-[11px] leading-none">✕</span>
+                      </button>
+                    )}
                   </li>
                 );
               })}

@@ -32,6 +32,39 @@ function normalized(value: string | null | undefined): string {
   return value?.trim().toLowerCase() ?? '';
 }
 
+/**
+ * Personalization is bucketed by the three runtime adapters only
+ * (Claude Code / Codex / Gemini). Provider/channel/model no longer split the
+ * buckets, so any unknown adapter folds into the Claude Code bucket.
+ */
+export type PersonalInstructionsAdapter = 'claude-code' | 'codex' | 'gemini';
+
+export const PERSONAL_INSTRUCTIONS_ADAPTERS: PersonalInstructionsAdapter[] = [
+  'claude-code',
+  'codex',
+  'gemini',
+];
+
+export function normalizePersonalInstructionsAdapter(
+  adapter: string | null | undefined,
+): PersonalInstructionsAdapter {
+  const value = normalized(adapter);
+  if (value === 'codex') return 'codex';
+  if (value === 'gemini') return 'gemini';
+  return 'claude-code';
+}
+
+/** Canonical selection for an adapter bucket (used by the settings UI). */
+export function personalInstructionsCanonicalSelection(
+  adapter: string | null | undefined,
+): GatewaySelection {
+  return {
+    adapter: normalizePersonalInstructionsAdapter(adapter),
+    modelClass: 'default',
+    systemDefault: true,
+  };
+}
+
 function defaultProfileId(
   selection: Partial<GatewaySelection> | null | undefined,
 ): string {
@@ -55,26 +88,6 @@ function profileSuffix(profileId: string): string {
   return PERSONAL_INSTRUCTIONS_DEFAULTS.profiles[profileId]?.join('\n') ?? '';
 }
 
-function keyPart(value: string | null | undefined, fallback: string): string {
-  const trimmed = value?.trim() || fallback;
-  return encodeURIComponent(trimmed.toLowerCase());
-}
-
-export function personalInstructionsKey(
-  selection: Partial<GatewaySelection> | null | undefined,
-): string {
-  const model =
-    typeof selection?.modelOverride === 'string' && selection.modelOverride.trim()
-      ? selection.modelOverride
-      : selection?.modelClass;
-  return [
-    keyPart(selection?.adapter, 'claude-code'),
-    selection?.systemDefault ? 'system' : keyPart(selection?.providerId, 'system'),
-    selection?.systemDefault ? 'default' : keyPart(selection?.channelId, 'default'),
-    keyPart(model, 'default'),
-  ].join('|');
-}
-
 function decodeKeyPart(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -83,22 +96,23 @@ function decodeKeyPart(value: string): string {
   }
 }
 
+export function personalInstructionsKey(
+  selection: Partial<GatewaySelection> | null | undefined,
+): string {
+  // One bucket per adapter. Provider, channel and model no longer split the
+  // key, so every Claude Code / Codex / Gemini selection maps to a single slot.
+  return normalizePersonalInstructionsAdapter(selection?.adapter);
+}
+
 export function selectionFromPersonalInstructionsKey(
   key: string,
 ): GatewaySelection | null {
-  const [adapter, provider, channel, model] = key.split('|');
-  if (!adapter || !provider || !channel || !model) return null;
-  const systemDefault = provider === 'system' && channel === 'default';
-  return {
-    adapter: decodeKeyPart(adapter),
-    modelClass: decodeKeyPart(model),
-    ...(systemDefault
-      ? { systemDefault: true }
-      : {
-          providerId: decodeKeyPart(provider),
-          channelId: decodeKeyPart(channel),
-        }),
-  };
+  const trimmed = key?.trim();
+  if (!trimmed) return null;
+  // Legacy keys looked like "adapter|provider|channel|model"; keep reading the
+  // leading adapter segment so old storage migrates cleanly.
+  const adapterPart = trimmed.split('|')[0] ?? trimmed;
+  return personalInstructionsCanonicalSelection(decodeKeyPart(adapterPart));
 }
 
 export function personalInstructionsForSelection(
@@ -160,9 +174,11 @@ export function defaultPersonalInstructionsByModel(
 }
 
 export function shouldInjectPersonalInstructions(
-  adapter: string | null | undefined,
+  _adapter: string | null | undefined,
 ): boolean {
-  return (adapter ?? '').trim().toLowerCase() !== 'codex';
+  // All three adapters (Claude Code / Codex / Gemini) now receive the
+  // user's personal defaults. Codex is no longer skipped.
+  return true;
 }
 
 export function personalInstructionsBlock(

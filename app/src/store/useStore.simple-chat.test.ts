@@ -8,6 +8,7 @@ import {
   systemDefaultGatewaySelection,
   workflowDefaultGatewaySelection,
 } from '@/lib/modelGateway/resolver';
+import { DEFAULT_GAME_EXPERT_SETTINGS } from '@/lib/gameExperts';
 
 const gatewayMocks = vi.hoisted(() => ({
   completeGatewayText: vi.fn(),
@@ -83,6 +84,12 @@ function resetStore(workflow: IRGraph): void {
     lastRunFailedNodeId: null,
     personalInstructions: '',
     personalInstructionsByModel: {},
+    gameExpertSettings: {
+      ...DEFAULT_GAME_EXPERT_SETTINGS,
+      enabledExpertIds: [...DEFAULT_GAME_EXPERT_SETTINGS.enabledExpertIds],
+      customExperts: [...DEFAULT_GAME_EXPERT_SETTINGS.customExperts],
+      deletedExpertIds: [...DEFAULT_GAME_EXPERT_SETTINGS.deletedExpertIds],
+    },
   });
 }
 
@@ -387,6 +394,121 @@ describe('simple-workflow chat mode', () => {
     }
   });
 
+  it('keeps the target history workspace when a stale session activation finishes late', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const sourceWorkspace =
+      await historyStore.resolveWorkspaceByPath('E:\\project_moon_ues\\MoonEngine');
+    const targetWorkspace =
+      await historyStore.resolveWorkspaceByPath('E:\\OpenWorkflows');
+    const sourceRecord = await historyStore.createSession({
+      workspaceId: sourceWorkspace.id,
+      isWorkflow: false,
+      messages: [],
+      title: 'Moon chat',
+    });
+    const targetRecord = await historyStore.createSession({
+      workspaceId: targetWorkspace.id,
+      isWorkflow: false,
+      messages: [],
+      title: 'OpenWorkflows chat',
+    });
+    const sourceSession = {
+      id: sourceRecord.id,
+      workspaceId: sourceWorkspace.id,
+      title: sourceRecord.title,
+      createdAt: sourceRecord.createdAt,
+      updatedAt: sourceRecord.updatedAt,
+      isWorkflow: false,
+      messageCount: 0,
+    };
+    const targetSession = {
+      id: targetRecord.id,
+      workspaceId: targetWorkspace.id,
+      title: targetRecord.title,
+      createdAt: targetRecord.createdAt,
+      updatedAt: targetRecord.updatedAt,
+      isWorkflow: false,
+      messageCount: 0,
+    };
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: sourceWorkspace.id,
+      activeSessionId: sourceRecord.id,
+      composer: {
+        ...useStore.getState().composer,
+        workspace: sourceWorkspace.path,
+      },
+      workspaces: [sourceWorkspace, targetWorkspace],
+      sessions: [sourceSession],
+      sessionTree: {
+        [sourceWorkspace.id]: [sourceSession],
+        [targetWorkspace.id]: [targetSession],
+      },
+      locale: 'zh-CN',
+    });
+
+    const getSession = historyStore.getSession.bind(historyStore);
+    let releaseSourceGet!: () => void;
+    const sourceGetGate = new Promise<void>((resolve) => {
+      releaseSourceGet = resolve;
+    });
+    const getSpy = vi
+      .spyOn(historyStore, 'getSession')
+      .mockImplementation(async (workspaceId, sessionId) => {
+        if (
+          workspaceId === sourceWorkspace.id &&
+          sessionId === sourceRecord.id
+        ) {
+          await sourceGetGate;
+        }
+        return getSession(workspaceId, sessionId);
+      });
+
+    try {
+      useStore.getState().selectSession(sourceRecord.id, sourceWorkspace.id);
+      await waitFor(
+        () =>
+          getSpy.mock.calls.some(
+            ([workspaceId, sessionId]) =>
+              workspaceId === sourceWorkspace.id &&
+              sessionId === sourceRecord.id,
+          ),
+        'source session activation to start',
+      );
+
+      useStore.getState().setWorkspace(targetWorkspace.path);
+      await waitFor(
+        () =>
+          useStore.getState().activeWorkspaceId === targetWorkspace.id &&
+          useStore.getState().activeSessionId === targetRecord.id,
+        'target workspace activation before stale session activation finishes',
+      );
+
+      releaseSourceGet();
+      await Promise.all(
+        getSpy.mock.results.map((result) =>
+          result.type === 'return'
+            ? result.value.catch(() => undefined)
+            : undefined,
+        ),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const state = useStore.getState();
+      expect(state.composer.workspace).toBe(targetWorkspace.path);
+      expect(state.activeWorkspaceId).toBe(targetWorkspace.id);
+      expect(state.sessions.map((session) => session.id)).toEqual([
+        targetRecord.id,
+      ]);
+      expect(state.activeSessionId).toBe(targetRecord.id);
+    } finally {
+      getSpy.mockRestore();
+    }
+  });
+
   it('keeps a plain chat session non-workflow after a direct model reply', async () => {
     window.localStorage.clear();
     await historyStore.ready();
@@ -624,6 +746,71 @@ describe('simple-workflow chat mode', () => {
     expect(systems[0]).toContain('简单 Workflow');
     expect(systems[0]).not.toContain('【用户个人默认指令（低优先级）】');
     expect(systems[0]).not.toContain('- 默认使用中文');
+  });
+
+  it('injects game experts into simple chat only when explicitly forced', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    useStore.setState({
+      gameExpertSettings: {
+        ...DEFAULT_GAME_EXPERT_SETTINGS,
+        enabled: true,
+        maxExperts: 4,
+      },
+    });
+    const systems: string[] = [];
+    gatewayMocks.completeGatewayText.mockImplementation(async (request) => {
+      systems.push(String(request.system));
+      return 'Use a parry state and damage window.';
+    });
+
+    useStore
+      .getState()
+      .sendPrompt('Unity 里做一个近战格挡和伤害判定系统', {
+        forceGameExperts: true,
+      });
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore.getState().messages.some((m) => m.role === 'assistant'),
+      'game expert simple chat answer',
+    );
+
+    expect(systems[0]).toContain('【游戏专家系统】');
+    expect(systems[0]).toContain('Unity Specialist');
+    expect(systems[0]).toContain('Gameplay Programmer');
+  });
+
+  it('never auto-injects game experts from chat text', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    useStore.setState({
+      gameExpertSettings: {
+        ...DEFAULT_GAME_EXPERT_SETTINGS,
+        enabled: true,
+        maxExperts: 4,
+      },
+    });
+    const systems: string[] = [];
+    gatewayMocks.completeGatewayText.mockImplementation(async (request) => {
+      systems.push(String(request.system));
+      return 'Use a parry state and damage window.';
+    });
+
+    // No forceGameExperts flag: even with experts enabled and obvious game
+    // keywords, the prompt must stay clean (explicit-only routing).
+    useStore.getState().sendPrompt('Unity 里做一个近战格挡和伤害判定系统');
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore.getState().messages.some((m) => m.role === 'assistant'),
+      'plain simple chat answer',
+    );
+
+    expect(systems[0]).not.toContain('【游戏专家系统】');
+    expect(systems[0]).not.toContain('【游戏制作人总控】');
   });
 
   it('switches simple chat personal instructions with the active model', async () => {

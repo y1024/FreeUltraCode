@@ -272,6 +272,14 @@ struct LocalFilePreview {
     base64: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelAssetDownload {
+    path: String,
+    mime: String,
+    size_bytes: usize,
+}
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SlashCatalogEntry {
@@ -1949,6 +1957,8 @@ const CLIPBOARD_IMAGE_LIMIT: usize = 32 * 1024 * 1024;
 const SESSION_CAPTURE_LIMIT: usize = 128 * 1024 * 1024;
 const CAPTURE_IMAGE_FETCH_LIMIT: usize = 32 * 1024 * 1024;
 const CAPTURE_IMAGE_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const MODEL_ASSET_FETCH_LIMIT: usize = 128 * 1024 * 1024;
+const MODEL_ASSET_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// Normalize path separators per-platform.
 ///
@@ -1980,6 +1990,47 @@ fn preview_path(path: &str, cwd: Option<&str>) -> Result<PathBuf, String> {
         return Ok(raw);
     };
     Ok(PathBuf::from(cwd).join(raw))
+}
+
+fn preview_workspace_app_fallback(path: &str, cwd: Option<&str>) -> Option<PathBuf> {
+    let cwd = cwd?.trim();
+    if cwd.is_empty() {
+        return None;
+    }
+
+    let root = PathBuf::from(cwd);
+    if !root.is_dir() {
+        return None;
+    }
+
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let raw = PathBuf::from(trimmed);
+    let candidate = if raw.is_absolute() {
+        let relative = raw.strip_prefix(&root).ok()?;
+        root.join("app").join(relative)
+    } else {
+        root.join("app").join(raw)
+    };
+
+    candidate.exists().then_some(candidate)
+}
+
+#[cfg(windows)]
+fn display_preview_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
+}
+
+#[cfg(not(windows))]
+fn display_preview_path(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }
 
 fn image_mime_for_path(path: &std::path::Path) -> Option<&'static str> {
@@ -2054,6 +2105,81 @@ fn image_mime_for_url(url: &str) -> Option<&'static str> {
         .next()
         .unwrap_or(url);
     image_mime_for_path(std::path::Path::new(path))
+}
+
+fn model_mime_for_extension(ext: &str) -> Option<&'static str> {
+    match ext.to_ascii_lowercase().as_str() {
+        "glb" => Some("model/gltf-binary"),
+        "gltf" => Some("model/gltf+json"),
+        "obj" => Some("text/plain"),
+        "stl" | "fbx" | "ply" => Some("application/octet-stream"),
+        "usdz" => Some("model/vnd.usdz+zip"),
+        "zip" => Some("application/zip"),
+        _ => None,
+    }
+}
+
+fn model_mime_for_url(url: &str) -> Option<&'static str> {
+    let path = url
+        .split('#')
+        .next()
+        .unwrap_or(url)
+        .split('?')
+        .next()
+        .unwrap_or(url);
+    model_mime_for_path(std::path::Path::new(path))
+}
+
+fn model_mime_for_path(path: &std::path::Path) -> Option<&'static str> {
+    path.extension()
+        .and_then(|ext| model_mime_for_extension(&ext.to_string_lossy()))
+}
+
+fn model_mime_for_content_type(content_type: &str) -> Option<&'static str> {
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match media_type.as_str() {
+        "model/gltf-binary" => Some("model/gltf-binary"),
+        "model/gltf+json" => Some("model/gltf+json"),
+        "model/vnd.usdz+zip" => Some("model/vnd.usdz+zip"),
+        "application/zip" | "application/x-zip-compressed" => Some("application/zip"),
+        "application/octet-stream" | "binary/octet-stream" => Some("application/octet-stream"),
+        "text/plain" => Some("text/plain"),
+        _ => None,
+    }
+}
+
+fn model_mime_for_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"glTF") {
+        return Some("model/gltf-binary");
+    }
+    if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
+        return Some("application/zip");
+    }
+    let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(512)])
+        .trim_start()
+        .to_ascii_lowercase();
+    if prefix.starts_with('{') && prefix.contains("\"asset\"") {
+        return Some("model/gltf+json");
+    }
+    if prefix.starts_with("solid ") {
+        return Some("application/octet-stream");
+    }
+    None
+}
+
+fn model_extension_for_mime(mime: &str) -> &'static str {
+    match mime {
+        "model/gltf+json" => "gltf",
+        "model/vnd.usdz+zip" => "usdz",
+        "application/zip" => "zip",
+        "text/plain" => "obj",
+        _ => "glb",
+    }
 }
 
 fn text_mime_for_path(path: &std::path::Path) -> &'static str {
@@ -2222,8 +2348,11 @@ fn preview_local_file_blocking(
     let resolved = if resolved.exists() {
         resolved
     } else {
-        preview_bare_name_fallback(&path, cwd.as_deref()).unwrap_or(resolved)
+        preview_workspace_app_fallback(&path, cwd.as_deref())
+            .or_else(|| preview_bare_name_fallback(&path, cwd.as_deref()))
+            .unwrap_or(resolved)
     };
+    let resolved = std::fs::canonicalize(&resolved).unwrap_or(resolved);
     let metadata = std::fs::metadata(&resolved).map_err(|e| format!("读取文件信息失败：{e}"))?;
     if !metadata.is_file() {
         return Err("目标不是文件。".to_string());
@@ -2235,7 +2364,7 @@ fn preview_local_file_blocking(
         .and_then(|name| name.to_str())
         .unwrap_or("file")
         .to_string();
-    let path = resolved.to_string_lossy().to_string();
+    let path = display_preview_path(&resolved);
 
     if let Some(mime) = image_mime_for_path(&resolved) {
         if size_bytes > PREVIEW_IMAGE_LIMIT {
@@ -2424,6 +2553,19 @@ fn session_capture_dir(cwd: Option<&str>) -> PathBuf {
         .join("session-captures")
 }
 
+fn model_asset_dir(cwd: Option<&str>) -> PathBuf {
+    let cwd = cwd.unwrap_or_default().trim();
+    if !cwd.is_empty() {
+        let root = PathBuf::from(cwd);
+        if root.is_dir() {
+            return root.join(".omc").join("model-assets");
+        }
+    }
+    std::env::temp_dir()
+        .join("freeultracode")
+        .join("model-assets")
+}
+
 fn safe_session_capture_stem(file_name: Option<&str>) -> String {
     let raw = file_name
         .and_then(|name| Path::new(name).file_stem())
@@ -2443,6 +2585,72 @@ fn safe_session_capture_stem(file_name: Option<&str>) -> String {
     } else {
         trimmed.chars().take(96).collect()
     }
+}
+
+fn source_file_name_from_url(url: &str) -> Option<&str> {
+    url.split('#')
+        .next()
+        .unwrap_or(url)
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .rsplit('/')
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+fn safe_model_asset_stem(file_name: Option<&str>, url: Option<&str>) -> String {
+    let raw = file_name
+        .and_then(|name| Path::new(name).file_stem())
+        .and_then(|stem| stem.to_str())
+        .or_else(|| {
+            url.and_then(source_file_name_from_url)
+                .and_then(|name| Path::new(name).file_stem())
+                .and_then(|stem| stem.to_str())
+        })
+        .unwrap_or("model-asset");
+    let mut out = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else if ch.is_whitespace() {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches(['-', '_', '.']).to_string();
+    if trimmed.is_empty() {
+        "model-asset".to_string()
+    } else {
+        trimmed.chars().take(96).collect()
+    }
+}
+
+fn model_asset_extension(mime: &str, url: Option<&str>, file_name: Option<&str>) -> &'static str {
+    for candidate in [file_name, url.and_then(source_file_name_from_url)]
+        .into_iter()
+        .flatten()
+    {
+        let ext = Path::new(candidate)
+            .extension()
+            .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        match ext.as_str() {
+            "glb" => return "glb",
+            "gltf" => return "gltf",
+            "obj" => return "obj",
+            "stl" => return "stl",
+            "fbx" => return "fbx",
+            "ply" => return "ply",
+            "usdz" => return "usdz",
+            "zip" => return "zip",
+            _ => {}
+        }
+    }
+    if mime == "application/zip" {
+        return "zip";
+    }
+    model_extension_for_mime(mime)
 }
 
 fn write_unique_session_capture(
@@ -2476,6 +2684,39 @@ fn write_unique_session_capture(
     }
 
     Err("创建截图文件失败：文件名冲突。".to_string())
+}
+
+fn write_unique_model_asset(
+    dir: &Path,
+    stem: &str,
+    ext: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("创建模型目录失败：{e}"))?;
+
+    for attempt in 0..128 {
+        let name = if attempt == 0 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}-{attempt}.{ext}")
+        };
+        let path = dir.join(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(bytes)
+                    .map_err(|e| format!("写入模型文件失败：{e}"))?;
+                return Ok(path);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(format!("创建模型文件失败：{err}")),
+        }
+    }
+
+    Err("创建模型文件失败：文件名冲突。".to_string())
 }
 
 fn save_clipboard_image_blocking(
@@ -2615,6 +2856,134 @@ async fn fetch_capture_image_data_url(url: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || fetch_capture_image_data_url_blocking(url))
         .await
         .map_err(|e| format!("截图图片下载任务失败: {e}"))?
+}
+
+fn fetch_model_asset_bytes(url: &str) -> Result<(Vec<u8>, &'static str), String> {
+    let url = url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("模型地址必须是 http(s)。".to_string());
+    }
+
+    let response = ureq::get(url)
+        .timeout(MODEL_ASSET_FETCH_TIMEOUT)
+        .set(
+            "Accept",
+            "model/gltf-binary,model/gltf+json,application/octet-stream,text/plain,*/*;q=0.8",
+        )
+        .set("User-Agent", "FreeUltraCode")
+        .call()
+        .map_err(|err| match err {
+            ureq::Error::Status(code, _) => format!("模型下载失败：HTTP {code}。"),
+            other => format!("模型下载失败：{other}"),
+        })?;
+
+    if let Some(len) = response
+        .header("content-length")
+        .and_then(|value| value.trim().parse::<usize>().ok())
+    {
+        if len > MODEL_ASSET_FETCH_LIMIT {
+            return Err("模型文件过大，最大支持 128MB 内嵌预览。".to_string());
+        }
+    }
+
+    let content_type = response.header("content-type").unwrap_or("").to_string();
+    let mut reader = response.into_reader();
+    let mut bytes = Vec::new();
+    std::io::Read::by_ref(&mut reader)
+        .take((MODEL_ASSET_FETCH_LIMIT as u64) + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("读取模型失败：{e}"))?;
+
+    if bytes.is_empty() {
+        return Err("模型文件为空。".to_string());
+    }
+    if bytes.len() > MODEL_ASSET_FETCH_LIMIT {
+        return Err("模型文件过大，最大支持 128MB 内嵌预览。".to_string());
+    }
+
+    let mime = model_mime_for_bytes(&bytes)
+        .or_else(|| model_mime_for_content_type(&content_type))
+        .or_else(|| model_mime_for_url(url))
+        .ok_or_else(|| "模型响应不是支持的 3D 预览格式。".to_string())?;
+    Ok((bytes, mime))
+}
+
+fn model_data_url(bytes: &[u8], mime: &str) -> String {
+    use base64::Engine;
+
+    let base64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:{mime};base64,{base64}")
+}
+
+fn fetch_model_asset_data_url_blocking(url: String) -> Result<String, String> {
+    let (bytes, mime) = fetch_model_asset_bytes(&url)?;
+    Ok(model_data_url(&bytes, mime))
+}
+
+#[tauri::command]
+async fn fetch_model_asset_data_url(url: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || fetch_model_asset_data_url_blocking(url))
+        .await
+        .map_err(|e| format!("模型下载任务失败: {e}"))?
+}
+
+fn read_model_asset_data_url_blocking(path: String, cwd: Option<String>) -> Result<String, String> {
+    let path = preview_path(&normalize_preview_separators(&path), cwd.as_deref())?;
+    let meta = std::fs::metadata(&path).map_err(|e| format!("读取模型文件失败：{e}"))?;
+    if !meta.is_file() {
+        return Err("模型路径不是文件。".to_string());
+    }
+    if meta.len() > MODEL_ASSET_FETCH_LIMIT as u64 {
+        return Err("模型文件过大，最大支持 128MB 内嵌预览。".to_string());
+    }
+
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取模型文件失败：{e}"))?;
+    if bytes.is_empty() {
+        return Err("模型文件为空。".to_string());
+    }
+    if bytes.len() > MODEL_ASSET_FETCH_LIMIT {
+        return Err("模型文件过大，最大支持 128MB 内嵌预览。".to_string());
+    }
+
+    let mime = model_mime_for_bytes(&bytes)
+        .or_else(|| model_mime_for_path(&path))
+        .ok_or_else(|| "模型文件不是支持的 3D 预览格式。".to_string())?;
+    Ok(model_data_url(&bytes, mime))
+}
+
+#[tauri::command]
+async fn read_model_asset_data_url(path: String, cwd: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_model_asset_data_url_blocking(path, cwd))
+        .await
+        .map_err(|e| format!("模型读取任务失败: {e}"))?
+}
+
+fn download_model_asset_blocking(
+    url: String,
+    cwd: Option<String>,
+    file_name: Option<String>,
+) -> Result<ModelAssetDownload, String> {
+    let (bytes, mime) = fetch_model_asset_bytes(&url)?;
+    let ext = model_asset_extension(mime, Some(&url), file_name.as_deref());
+    let stem = safe_model_asset_stem(file_name.as_deref(), Some(&url));
+    let dir = model_asset_dir(cwd.as_deref());
+    let path = write_unique_model_asset(&dir, &stem, ext, &bytes)?;
+    Ok(ModelAssetDownload {
+        path: path.to_string_lossy().to_string(),
+        mime: mime.to_string(),
+        size_bytes: bytes.len(),
+    })
+}
+
+#[tauri::command]
+async fn download_model_asset(
+    url: String,
+    cwd: Option<String>,
+    file_name: Option<String>,
+) -> Result<ModelAssetDownload, String> {
+    tauri::async_runtime::spawn_blocking(move || download_model_asset_blocking(url, cwd, file_name))
+        .await
+        .map_err(|e| format!("模型下载保存任务失败: {e}"))?
 }
 
 fn fallback_local_model_hardware() -> LocalModelHardware {
@@ -3708,16 +4077,17 @@ fn ai_cli_timeout_secs(override_secs: Option<u64>) -> u64 {
 }
 
 /// Whether to load the machine's global MCP servers for each workflow node.
-/// Off by default (each cold `claude -p` spawn skips MCP init, saving ~2-4s of
-/// startup per node); set FREEULTRACODE_ENABLE_MCP=1 to opt back in for
-/// workflows whose nodes actually call an MCP tool.
+/// On by default so workflow nodes share the same MCP tools as a hand-run
+/// `claude` (e.g. pencil `mcp__pencil__...`). Set FREEULTRACODE_ENABLE_MCP=0
+/// (or false/no) to opt out and skip MCP init for faster cold spawns.
 fn mcp_enabled() -> bool {
     std::env::var("FREEULTRACODE_ENABLE_MCP")
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
-            v == "1" || v == "true" || v == "yes"
+            // Default on: only an explicit disable value turns MCP off.
+            !(v == "0" || v == "false" || v == "no" || v == "off")
         })
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 fn claude_bare_mode_disabled() -> bool {
@@ -3928,6 +4298,90 @@ fn write_claude_gateway_settings(
         serde_json::to_vec(&settings).map_err(|e| format!("生成 Claude 临时配置失败: {e}"))?;
     std::fs::write(&path, bytes).map_err(|e| format!("写入 Claude 临时配置失败: {e}"))?;
     Ok(Some(TempFileGuard::new(path)))
+}
+
+static CLAUDE_BARE_SUPPORT_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+
+fn claude_help_supports_bare(help_text: &str) -> bool {
+    help_text.contains("--bare")
+}
+
+fn shell_spec_cache_key(shell: &Option<ShellSpec>) -> String {
+    shell
+        .as_ref()
+        .map(|s| {
+            format!(
+                "{}:{}",
+                s.kind.trim(),
+                s.path.as_deref().unwrap_or("").trim()
+            )
+        })
+        .unwrap_or_else(|| "direct".to_string())
+}
+
+fn command_text_output_with_timeout(
+    mut cmd: Command,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    let stdout_path = temp_output_path("freeultracode-cli-help-stdout", "txt");
+    let stderr_path = temp_output_path("freeultracode-cli-help-stderr", "txt");
+    let _stdout_guard = TempFileGuard::new(stdout_path.clone());
+    let _stderr_guard = TempFileGuard::new(stderr_path.clone());
+    let stdout_file = std::fs::File::create(&stdout_path)
+        .map_err(|e| format!("创建 CLI 探测输出文件失败: {e}"))?;
+    let stderr_file = std::fs::File::create(&stderr_path)
+        .map_err(|e| format!("创建 CLI 探测错误文件失败: {e}"))?;
+
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
+        .spawn()
+        .map_err(|e| format!("启动 CLI 探测失败: {e}"))?;
+
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    terminate_child_tree(&mut child);
+                    return Err("CLI 探测超时".to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                terminate_child_tree(&mut child);
+                return Err(format!("等待 CLI 探测失败: {e}"));
+            }
+        }
+    }
+
+    let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    Ok(format!("{stdout}\n{stderr}"))
+}
+
+fn claude_cli_supports_bare(binary: &str, shell: &Option<ShellSpec>) -> bool {
+    let key = format!("{}\0{}", binary, shell_spec_cache_key(shell));
+    let cache = CLAUDE_BARE_SUPPORT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = cache.lock() {
+        if let Some(supported) = cache.get(&key) {
+            return *supported;
+        }
+    }
+
+    let help_args = vec!["--help".to_string()];
+    let mut help_cmd = build_launch_command(binary, &help_args, shell);
+    help_cmd.env("DISABLE_AUTOUPDATER", "1");
+    let help_text = command_text_output_with_timeout(help_cmd, std::time::Duration::from_secs(5))
+        .unwrap_or_default();
+    let supported = claude_help_supports_bare(&help_text);
+
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(key, supported);
+    }
+    supported
 }
 
 /// Whether to request token-level partial streaming from the claude CLI via
@@ -4397,10 +4851,13 @@ async fn ai_cli(
             args.push("stream-json".into());
             args.push("--verbose".into());
             // Free/relay channels inject their own Anthropic-compatible key and
-            // base URL. Use Claude Code's minimal print mode there so user-level
-            // plugins/hooks (especially SessionEnd hooks) cannot turn a
-            // successful model call into exit=1.
-            if should_run_claude_bare(env_vars.as_ref()) {
+            // base URL. Use Claude Code's minimal print mode when available so
+            // user-level plugins/hooks (especially SessionEnd hooks) cannot
+            // turn a successful model call into exit=1. Older Claude builds do
+            // not know `--bare`, so probe once and fall back automatically.
+            if should_run_claude_bare(env_vars.as_ref())
+                && claude_cli_supports_bare(&binary, &shell)
+            {
                 args.push("--bare".into());
             }
             if let Some(settings_file) = write_claude_gateway_settings(env_vars.as_ref())? {
@@ -4417,15 +4874,13 @@ async fn ai_cli(
             // leave the binary corrupted ("bin executable does not exist").
             disable_autoupdater = true;
 
-            // Skip loading the machine's global MCP servers for each node. A
-            // workflow node is a short, bounded task that almost never needs
-            // pencil/lark/etc., yet initialising every configured MCP server
-            // costs ~2-4s of cold-start *per node* (measured) — paid N times
-            // for an N-node run, while a single interactive session pays it
-            // once. `--strict-mcp-config` with no `--mcp-config` means "use
-            // only servers from the (absent) config", i.e. none. Opt back in
-            // with FREEULTRACODE_ENABLE_MCP=1 for workflows that genuinely call
-            // an MCP tool.
+            // MCP is loaded for each node by default so workflow nodes share
+            // the same MCP tools as a hand-run `claude` (e.g. pencil
+            // `mcp__pencil__...`). `--strict-mcp-config` with no `--mcp-config`
+            // means "use only servers from the (absent) config", i.e. none —
+            // we add it only when MCP is explicitly disabled
+            // (FREEULTRACODE_ENABLE_MCP=0) to skip the ~2-4s cold-start MCP
+            // init per node.
             if !mcp_enabled() {
                 args.push("--strict-mcp-config".into());
             }
@@ -5003,6 +5458,38 @@ mod tests {
     }
 
     #[test]
+    fn model_mime_supports_preview_formats() {
+        assert_eq!(
+            model_mime_for_url("https://assets.example.com/model.glb?token=1"),
+            Some("model/gltf-binary")
+        );
+        assert_eq!(
+            model_mime_for_content_type("model/gltf+json; charset=utf-8"),
+            Some("model/gltf+json")
+        );
+        assert_eq!(
+            model_mime_for_bytes(b"glTF\x02\0\0\0"),
+            Some("model/gltf-binary")
+        );
+        assert_eq!(
+            model_mime_for_content_type("application/zip"),
+            Some("application/zip")
+        );
+        assert_eq!(
+            model_mime_for_bytes(b"PK\x03\x04\x0a\0\0\0"),
+            Some("application/zip")
+        );
+        assert_eq!(
+            model_asset_extension(
+                "application/zip",
+                Some("https://assets.example.com/model.zip"),
+                None
+            ),
+            "zip"
+        );
+    }
+
+    #[test]
     fn preview_text_mime_marks_html_and_markdown() {
         assert_eq!(
             text_mime_for_path(std::path::Path::new("Moon亮晶分析和渲染整体架构.html")),
@@ -5036,6 +5523,36 @@ mod tests {
 
         let found = preview_bare_name_fallback("shader.wgsl", root.to_str());
         assert_eq!(found.as_deref(), Some(file.as_path()));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preview_fallback_handles_omitted_app_prefix() {
+        let root = std::env::temp_dir().join(format!(
+            "freeultracode-preview-app-prefix-test-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let nested = root.join("app").join("cli").join("io");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("cli-spawn.ts");
+        std::fs::write(&file, "export const ok = true;\n").unwrap();
+
+        let relative = preview_local_file_blocking(
+            "cli/io/cli-spawn.ts".to_string(),
+            Some(root.to_string_lossy().to_string()),
+        )
+        .unwrap();
+        assert_eq!(relative.path, file.to_string_lossy());
+
+        let missing_app_absolute = root.join("cli").join("io").join("cli-spawn.ts");
+        let absolute = preview_local_file_blocking(
+            missing_app_absolute.to_string_lossy().to_string(),
+            Some(root.to_string_lossy().to_string()),
+        )
+        .unwrap();
+        assert_eq!(absolute.path, file.to_string_lossy());
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -5203,6 +5720,16 @@ mod tests {
         );
 
         assert!(!should_run_claude_bare_with_disable(Some(&env), true));
+    }
+
+    #[test]
+    fn claude_bare_support_comes_from_help_text() {
+        assert!(claude_help_supports_bare(
+            "Options:\n  --bare  Minimal mode\n  --verbose"
+        ));
+        assert!(!claude_help_supports_bare(
+            "Options:\n  --print\n  --verbose"
+        ));
     }
 
     #[test]
@@ -5411,6 +5938,9 @@ pub fn run() {
             save_clipboard_image,
             save_session_capture,
             fetch_capture_image_data_url,
+            fetch_model_asset_data_url,
+            read_model_asset_data_url,
+            download_model_asset,
             history::history_root,
             history::history_read_json,
             history::history_write_json,

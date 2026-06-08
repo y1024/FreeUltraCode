@@ -100,6 +100,132 @@ describe('MessageContent integration', () => {
     expect(html).toMatch(/data:image\/png;base64,iVBORw0KGgo=/);
   });
 
+  it('renders generated audio markdown with playback controls', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text:
+          '✓ 音乐生成完成\n\n' +
+          '[播放音频 1](https://example.com/generated.mp3)',
+        streaming: false,
+      }),
+    );
+
+    expect(html).toMatch(/ai-audio-player/);
+    expect(html).toMatch(/播放音频 1/);
+    expect(html).toMatch(/aria-label="播放"/);
+    expect(html).toMatch(/aria-label="快进 10 秒"/);
+    expect(html).toMatch(/aria-label="结束"/);
+    expect(html).toMatch(/aria-label="播放进度"/);
+  });
+
+  it('renders generated 3D model links as inline viewports', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text:
+          '✓ 3D 模型生成完成\n\n' +
+          '[预览 3D 模型 1](https://example.com/generated.glb)',
+        streaming: false,
+      }),
+    );
+
+    expect(html).toMatch(/ai-model-viewer/);
+    expect(html).toMatch(/3D 模型视口/);
+    expect(html).toMatch(/重置视角/);
+    expect(html).toMatch(/正在加载模型/);
+  });
+
+  it('keeps generated 3D data URLs through markdown sanitization', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '[预览 3D 模型 1](data:model/gltf-binary;base64,AAAA)',
+        streaming: false,
+      }),
+    );
+
+    expect(html).toMatch(/ai-model-viewer/);
+    expect(html).toMatch(/data:model\/gltf-binary;base64,AAAA/);
+  });
+
+  it('renders signed 3D asset URLs as viewports when the label names a model', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '[预览 3D 模型 1](https://cdn.example.com/assets/abc123?token=xyz)',
+        streaming: false,
+      }),
+    );
+
+    expect(html).toMatch(/ai-model-viewer/);
+    expect(html).toMatch(/abc123\?token=xyz/);
+  });
+
+  it('does not render explicit image URLs as 3D viewports just because the label names a model', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '[预览 3D 模型 6](https://assets.meshy.ai/tasks/output/preview.png?token=xyz)',
+        streaming: false,
+      }),
+    );
+
+    expect(html).not.toMatch(/ai-model-viewer/);
+    expect(html).toMatch(/preview\.png\?token=xyz/);
+  });
+
+  it('renders downloaded local 3D model links as viewports', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '[预览 3D 模型 1](file:///E:/OpenWorkflows/.omc/model-assets/model.glb)',
+        streaming: false,
+      }),
+    );
+
+    expect(html).toMatch(/ai-model-viewer/);
+    expect(html).toMatch(/model-assets/);
+    expect(html).not.toMatch(/ai-file-chip/);
+  });
+
+  it('falls back to a normal link for unsupported remote 3D model formats', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '[预览 3D 模型 5](https://assets.example.com/model.usdz)',
+        streaming: false,
+      }),
+    );
+
+    expect(html).not.toMatch(/ai-model-viewer/);
+    expect(html).not.toMatch(/当前格式暂不支持内嵌预览/);
+    expect(html).toMatch(/https:\/\/assets\.example\.com\/model\.usdz/);
+  });
+
+  it('falls back to a file chip for unsupported local 3D model formats', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '[预览 3D 模型 5](file:///E:/OpenWorkflows/.omc/model-assets/model.zip)',
+        streaming: false,
+        onOpenFile: () => {},
+      }),
+    );
+
+    expect(html).not.toMatch(/ai-model-viewer/);
+    expect(html).not.toMatch(/当前格式暂不支持内嵌预览/);
+    expect(html).toMatch(/ai-file-chip--interactive/);
+    expect(html).toMatch(/model-assets/);
+  });
+
+  it('renders requested default 3D animation controls in model previews', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text:
+          '✓ 3D 模型生成完成\n' +
+          '骨骼：已按可绑骨资产请求骨骼绑定和 Idle、Walk、Run 预览动画\n\n' +
+          '[预览 3D 模型 1](file:///E:/OpenWorkflows/.omc/model-assets/model.glb)',
+      }),
+    );
+
+    expect(html).toMatch(/aria-label="播放动画 Idle"/);
+    expect(html).toMatch(/aria-label="播放动画 Walk"/);
+    expect(html).toMatch(/aria-label="播放动画 Run"/);
+  });
+
   it('renders sandbox markdown links with unicode local filenames as file chips', () => {
     const name = 'Moon亮晶分析和渲染整体架构.html';
     const html = renderToStaticMarkup(

@@ -28,6 +28,7 @@ import ToolLine from './ToolLine';
 import Callout from './Callout';
 import { detectCallout, stripCalloutMarker } from './lib/callout';
 import FileChip, { type OpenFileFn } from './FileChip';
+import { isModelUrl } from './lib/modelLink';
 
 function markdownUrlTransform(url: string, key: string): string | null | undefined {
   if (
@@ -36,6 +37,13 @@ function markdownUrlTransform(url: string, key: string): string | null | undefin
   ) {
     return url;
   }
+  if (
+    key === 'href' &&
+    /^data:audio\/(?:mpeg|mp3|wav|x-wav|aac|mp4|ogg|webm|flac);base64,/i.test(url)
+  ) {
+    return url;
+  }
+  if (key === 'href' && isModelUrl(url)) return url;
   return defaultUrlTransform(url);
 }
 
@@ -68,6 +76,7 @@ function MarkdownImpl({
 }) {
   const normalized = protectWindowsPaths(normalizeMath(text));
   const src = streaming ? repairMarkdown(normalized) : normalized;
+  const defaultModelAnimations = extractDefaultModelAnimations(src);
 
   // Recursively walk rendered children, replacing bare file references inside
   // plain-text leaves with clickable chips. Elements (e.g. <strong>, <code>,
@@ -170,7 +179,12 @@ function MarkdownImpl({
       );
     },
     a: ({ href, children }) => (
-      <SmartLink href={href} onOpenFile={onOpenFile} cwd={cwd}>
+      <SmartLink
+        href={href}
+        onOpenFile={onOpenFile}
+        cwd={cwd}
+        defaultModelAnimations={defaultModelAnimations}
+      >
         {children as ReactNode}
       </SmartLink>
     ),
@@ -235,3 +249,14 @@ function MarkdownImpl({
 
 const Markdown = memo(MarkdownImpl);
 export default Markdown;
+
+function extractDefaultModelAnimations(text: string): string[] {
+  if (!text.includes('骨骼')) return [];
+  const match = /骨骼：[^。\n]*?请求骨骼绑定和\s+(.+?)\s+预览动画/u.exec(text);
+  if (!match) return [];
+  return match[1]
+    .split(/[、,，/]+/u)
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}

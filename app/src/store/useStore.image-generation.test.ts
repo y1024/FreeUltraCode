@@ -110,6 +110,52 @@ describe('image generation chat flow', () => {
     );
   });
 
+  it('merges sticky image-mode prompts since mode start', async () => {
+    writeImageSettings({
+      enabled: true,
+      preferredProviderId: 'minimax',
+      providerKeys: { minimax: 'test-key' },
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { image_urls: ['https://example.com/night.png'] },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    useStore.setState((state) => ({
+      composer: {
+        ...state.composer,
+        imageMode: true,
+        imageModeStartedAt: 100,
+      },
+      messages: [
+        {
+          id: 'm_first',
+          role: 'user',
+          text: '一张山水画',
+          createdAt: 110,
+        },
+      ],
+    }));
+
+    useStore.getState().generateImagePrompt('改成夜景');
+
+    await waitFor(() => {
+      const assistant = useStore
+        .getState()
+        .messages.find((message) => message.role === 'assistant');
+      return !!assistant && assistant.text.includes('图片生成完成');
+    }, 'sticky image generation to finish');
+
+    const body = JSON.parse(
+      String(fetchMock.mock.calls[0]?.[1]?.body ?? '{}'),
+    ) as { prompt?: string };
+    expect(body.prompt).toContain('一张山水画');
+    expect(body.prompt).toContain('改成夜景');
+  });
+
   it('surfaces a friendly failure when the provider errors', async () => {
     writeImageSettings({
       enabled: true,

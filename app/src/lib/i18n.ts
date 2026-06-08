@@ -332,6 +332,7 @@ const UI_FULL = {
     'workspace.chooseFolder': '选择工作区文件夹',
     'workspace.pickFolder': '选择文件夹…',
     'workspace.noHistory': '暂无历史记录',
+    'workspace.removeFolder': '移除文件夹',
     'canvas.unsavedTitle': '尚未保存到文件',
     'canvas.unsaved': '未保存…',
     'canvas.savedJustNow': '已保存 · 刚刚',
@@ -377,11 +378,21 @@ const UI_FULL = {
     'dock.imageModePlaceholder': '生图模式 · 直接描述要生成的图片，/image-mode-end 退出',
     'dock.imageModeEntered': '🎨 已进入生图模式 · 之后每条消息会先让编程模型撰写生图提示词，再自动出图，发送 /image-mode-end 退出',
     'dock.imageModeExited': '↩ 已退出生图模式 · 已切回 AI 编程渠道与模型',
+    'dock.musicModePlaceholder': '音乐模式 · 直接描述要生成的音乐，/music-mode-end 退出',
+    'dock.musicModeEntered': '🎵 已进入音乐模式 · 之后每条消息会先让编程模型撰写音乐提示词，再调用音乐模型，发送 /music-mode-end 退出',
+    'dock.musicModeExited': '↩ 已退出音乐模式 · 已切回 AI 编程渠道与模型',
+    'dock.threeDModePlaceholder': 'Mesh 模式 · 直接描述要生成的 3D 模型，/mesh-mode-end 退出',
+    'dock.threeDModeEntered': '🧊 已进入 Mesh 模式 · 之后每条消息会先让编程模型撰写 3D 提示词，再调用 3D 模型，发送 /mesh-mode-end 退出',
+    'dock.threeDModeExited': '↩ 已退出 Mesh 模式 · 已切回 AI 编程渠道与模型',
     'dock.imagePlaceholder': '描述要生成的图片、风格、主体、比例和文字内容…',
     'dock.tabChat': '聊天',
     'dock.tabImage': '生图',
     'dock.imageProviderTitle': '图片 Provider',
     'dock.imageModelTitle': '生图模型',
+    'dock.musicProviderTitle': '音乐 Provider',
+    'dock.musicModelTitle': '音乐模型',
+    'dock.threeDProviderTitle': '3D Provider',
+    'dock.threeDModelTitle': '3D 模型',
     'dock.addFileTitle': '添加文件路径',
     'dock.addFileDialogTitle': '选择要添加到 AI 输入的文件',
     'dock.permissionTitle': '权限设定',
@@ -414,6 +425,8 @@ const UI_FULL = {
     'dock.modelStrategy.better': '尽量用更好的大模型',
     'dock.modelStrategy.cheaper': '尽量用更便宜的大模型',
     'dock.inheritGlobal': '继承全局选择',
+    'dock.contextUsageTitle':
+      '估算：已使用 {used} / {limit} tokens。包含当前输入和会话文本；CLI/模型隐藏提示词可能让真实占用更高。',
     'dock.searchPlaceholder': '搜索 AI 返回…',
     'dock.searchAria': '搜索 AI 返回内容',
     'dock.searchPrevious': '上一个匹配',
@@ -550,6 +563,10 @@ const UI_FULL = {
     'settings.tabs.personalization': '个性化',
     'settings.tabs.models': '编程渠道',
     'settings.tabs.imageGeneration': '生图渠道',
+    'settings.tabs.musicGeneration': '音乐渠道',
+    'settings.tabs.threeDGeneration': 'Mesh 渠道',
+    'settings.tabs.rigging': '骨骼绑定',
+    'settings.tabs.gameExperts': '游戏专家',
     'settings.tabs.freeChannels': '免费渠道',
     'settings.tabs.consensus': '共识',
     'settings.tabs.commands': '命令',
@@ -564,6 +581,7 @@ const UI_FULL = {
     'settings.freeChannels.modelLabel': '模型',
     'settings.freeChannels.modelPlaceholderLocal': '填写已加载的模型 id',
     'settings.freeChannels.getKey': '获取 Key',
+    'settings.freeChannels.manageKey': '管理 Key',
     'settings.freeChannels.clear': '清除',
     'settings.freeChannels.ready': '已就绪',
     'settings.freeChannels.needsKey': '待填 Key',
@@ -584,18 +602,61 @@ const UI_FULL = {
     'settings.freeChannels.localSetup': '本地一键配置',
     'settings.freeChannels.localStatusHint':
       '本地渠道会检测服务端口和已加载模型；未就绪时不会直接切过去。',
+    'settings.gameExperts.title': '游戏专家',
+    'settings.gameExperts.description':
+      '按游戏开发任务自动选择专家视角，注入到本轮模型提示中。默认关闭。',
+    'settings.gameExperts.enabledLabel': '启用游戏专家',
+    'settings.gameExperts.enabledDesc':
+      '开启后，游戏相关输入会自动选择玩法、引擎、UI、性能、QA 等专家指导。',
+    'settings.gameExperts.engineLabel': '引擎偏好',
+    'settings.gameExperts.engineDesc':
+      '自动模式会从输入里识别 Unity、Unreal、Godot 或 Web 游戏关键词。',
+    'settings.gameExperts.modeLabel': '专家模式',
+    'settings.gameExperts.modeDesc':
+      '控制专家提示密度。标准适合日常开发，合议适合复杂架构和系统取舍。',
+    'settings.gameExperts.maxExpertsLabel': '每轮最多专家',
+    'settings.gameExperts.maxExpertsDesc':
+      '限制注入专家数量，避免占用过多上下文。',
+    'settings.gameExperts.poolTitle': '专家池',
+    'settings.gameExperts.poolDesc':
+      '禁用不需要的专家后，自动路由不会再选择它们。',
+    'settings.gameExperts.enabledCount': '{n}/{total}',
+    'settings.gameExperts.selectAll': '全选',
+    'settings.gameExperts.categoryAll': '全部',
+    'settings.gameExperts.engineAuto': '自动识别',
+    'settings.gameExperts.engineWeb': 'Web 游戏',
+    'settings.gameExperts.engineCustom': '自定义',
+    'settings.gameExperts.modeLight': '轻量',
+    'settings.gameExperts.modeStandard': '标准',
+    'settings.gameExperts.modeCouncil': '合议',
+    'settings.gameExperts.newExpert': '新建',
+    'settings.gameExperts.edit': '修改专家',
+    'settings.gameExperts.delete': '删除专家',
+    'settings.gameExperts.customBadge': '已定制',
+    'settings.gameExperts.editorTitle': '编辑专家内容',
+    'settings.gameExperts.editorId': 'ID',
+    'settings.gameExperts.editorName': '名称',
+    'settings.gameExperts.editorGroup': '分组',
+    'settings.gameExperts.editorSummary': '摘要',
+    'settings.gameExperts.editorRole': '角色',
+    'settings.gameExperts.editorTriggers': '触发词（换行或逗号分隔）',
+    'settings.gameExperts.editorGuidance': '关注点（换行或逗号分隔）',
+    'settings.gameExperts.editorBoundaries': '边界（换行或逗号分隔）',
+    'settings.gameExperts.editorAffinity': '引擎倾向',
+    'settings.gameExperts.editorInvalid': '至少需要填写专家名称。',
+    'settings.gameExperts.deleteConfirm': '删除专家「{name}」？内置专家会从当前项目专家池隐藏。',
     'settings.imageGeneration.title': '生图',
     'settings.imageGeneration.description':
-      '配置聊天内 /image 和 /生图 使用的图片 Provider。生成结果会作为聊天消息的一部分显示，不再单独占用顶部生图入口。',
-    'settings.imageGeneration.enabledLabel': '自动识别生图需求',
+      '配置生图模式使用的图片 Provider。默认在聊天内发送 /image-mode-start 进入生图模式，发送 /image-mode-end 退出。',
+    'settings.imageGeneration.enabledLabel': '启用生图模式',
     'settings.imageGeneration.enabledDesc':
-      '开启后，输入“生成图片 / 画图 / create image”等请求会直接调用配置好的生图模型；也可以显式输入 /image 或 /生图。',
+      '开启后，/image-mode-start 会进入生图模式；模式内直接描述图片需求即可调用配置好的生图模型，/image-mode-end 切回普通聊天。',
     'settings.imageGeneration.showComposerModelLabel': '在输入框显示生图模型下拉框',
     'settings.imageGeneration.showComposerModelDesc':
       '默认隐藏，只显示图片 Provider；打开后可在输入框底部直接切换具体生图模型。',
     'settings.imageGeneration.defaultProviderLabel': '默认生图 Provider',
     'settings.imageGeneration.defaultProviderDesc':
-      '聊天内 /image、/生图 和自动识别默认使用该 Provider；如果未配置完整，会尝试使用其它已就绪 Provider。',
+      '生图模式（/image-mode-start 到 /image-mode-end）默认使用该 Provider；如果未配置完整，会尝试使用其它已就绪 Provider。',
     'settings.imageGeneration.accountIdLabel': 'Account ID',
     'settings.imageGeneration.freeCreditProviders': '免费额度渠道',
     'settings.imageGeneration.freeCreditProvidersDesc':
@@ -606,6 +667,79 @@ const UI_FULL = {
     'settings.imageGeneration.categoryFreeCredit': '免费额度',
     'settings.imageGeneration.categoryCommercial': '商用',
     'settings.imageGeneration.noKeyRequired': '无需 Key',
+    'settings.musicGeneration.title': '音乐生成',
+    'settings.musicGeneration.description':
+      '配置音乐模式使用的音乐生成渠道。默认在聊天内发送 /music-mode-start 进入音乐模式，发送 /music-mode-end 退出。',
+    'settings.musicGeneration.enabledLabel': '启用音乐生成',
+    'settings.musicGeneration.enabledDesc':
+      '开启后，/music-mode-start 会进入音乐模式；模式内直接描述音乐需求即可调用默认音乐 Provider，/music-mode-end 切回普通聊天。',
+    'settings.musicGeneration.defaultProviderLabel': '默认音乐 Provider',
+    'settings.musicGeneration.defaultProviderDesc':
+      '音乐模式（/music-mode-start 到 /music-mode-end）默认使用该 Provider；如果未配置完整，会尝试其它已就绪 Provider。',
+    'settings.musicGeneration.officialProviders': '官方 API 渠道',
+    'settings.musicGeneration.officialProvidersDesc':
+      '优先使用官方 API 或官方 B2B API；第三方聚合渠道会在说明里单独标注。',
+    'settings.musicGeneration.officialApi': '官方 API',
+    'settings.musicGeneration.commercialProviders': '商用渠道',
+    'settings.musicGeneration.commercialProvidersDesc':
+      '生产优先渠道。使用官方 API / B2B API，适合正式产品接入和可追踪计费。',
+    'settings.musicGeneration.freeProviders': '免费渠道',
+    'settings.musicGeneration.freeProvidersDesc':
+      '免费额度、实验服务和本地模型入口。适合验证、低成本生成或自托管；商用前需核模型许可。',
+    'settings.musicGeneration.categoryCommercial': '商用',
+    'settings.musicGeneration.categoryFree': '免费',
+    'settings.threeDGeneration.title': '3D 模型生成',
+    'settings.threeDGeneration.description':
+      '配置 Mesh 模式使用的 3D 生成渠道。默认在聊天内发送 /mesh-mode-start 进入 Mesh 模式，发送 /mesh-mode-end 退出。',
+    'settings.threeDGeneration.enabledLabel': '启用 3D 生成',
+    'settings.threeDGeneration.enabledDesc':
+      '开启后，/mesh-mode-start 会进入 Mesh 模式；模式内直接描述 3D 模型需求即可调用默认 3D Provider，/mesh-mode-end 切回普通聊天。',
+    'settings.threeDGeneration.defaultProviderLabel': '默认 3D Provider',
+    'settings.threeDGeneration.defaultProviderDesc':
+      'Mesh 模式（/mesh-mode-start 到 /mesh-mode-end）默认使用该 Provider；如果未配置完整，会尝试其它已就绪 Provider。',
+    'settings.threeDGeneration.commercialProviders': '商用渠道',
+    'settings.threeDGeneration.commercialProvidersDesc':
+      '面向正式产品接入的 3D 生成 API。通常按任务或 credits 计费，适合稳定调用和可追踪账单。',
+    'settings.threeDGeneration.freeProviders': '免费 / 本地渠道',
+    'settings.threeDGeneration.freeProvidersDesc':
+      '包含 Hugging Face、Roblox 平台路线和本地 Hunyuan3D、TRELLIS、Stable Fast 3D、Shap-E、OpenLRM 等模型入口。',
+    'settings.threeDGeneration.categoryCommercial': '商用',
+    'settings.threeDGeneration.categoryFree': '免费/本地',
+    'settings.rigging.title': '骨骼绑定',
+    'settings.rigging.description':
+      '配置 3D 角色生成后的自动绑骨、蒙皮和默认动画后处理。API 直接调用；本地工具只记录外部服务或命令，不随应用打包。',
+    'settings.rigging.enabledLabel': '启用自动骨骼绑定',
+    'settings.rigging.enabledDesc':
+      '仅对人形、动物、机器人等可绑骨资产启用；石头、家具、建筑等静态资产仍跳过。',
+    'settings.rigging.defaultProviderLabel': '默认骨骼绑定 Provider',
+    'settings.rigging.defaultProviderDesc':
+      '生成公开 GLB/FBX 后优先调用该 Provider；失败时按内置顺序尝试可用后备 Provider。',
+    'settings.rigging.externalInstallNotice':
+      '本地方案不会自动下载或打包 Blender、AccuRIG、Auto-Rig Pro 等工具。你可以安装后填写本地服务 endpoint 或命令路径；未配置时只作为资料入口。',
+    'settings.rigging.onlineProviders': '在线 API',
+    'settings.rigging.onlineProvidersDesc':
+      '可直接通过 API 接入的自动绑骨/动画服务。通常需要公开可访问的模型 URL 和 API Key。',
+    'settings.rigging.localProviders': '本地 / 外部工具',
+    'settings.rigging.localProvidersDesc':
+      '本地服务或桌面工具入口。应用只存 endpoint/命令，不内置大体积依赖。',
+    'settings.rigging.manualProviders': '手动导入',
+    'settings.rigging.manualProvidersDesc':
+      '网页或桌面工作流。用于人工处理后把 rigged FBX/GLB 导回项目。',
+    'settings.rigging.categoryOnline': '在线 API',
+    'settings.rigging.categoryLocal': '本地',
+    'settings.rigging.categoryManual': '手动',
+    'settings.rigging.commercialChannel': '商用渠道',
+    'settings.rigging.commercialChannelDesc':
+      '可直接通过 API 接入的在线自动绑骨 / 动画服务。通常需要公开可访问的模型 URL 和 API Key；与 Mesh 渠道共用同一 Key，配置一次即可。',
+    'settings.rigging.freeChannel': '免费渠道',
+    'settings.rigging.freeChannelDesc':
+      '本地服务、桌面工具与手动导入路线（含 Blender、AccuRIG、Mixamo 等）。应用只存 endpoint / 命令，不内置大体积依赖。',
+    'settings.rigging.inheritedPlaceholder': '已继承 Mesh 渠道 Key',
+    'settings.rigging.inheritedHint': '已自动继承 Mesh 渠道「{source}」的 Key，无需重复填写；如需覆盖可在此另填。',
+    'settings.rigging.manualOnly': '手动导入',
+    'settings.rigging.needsCommand': '待填命令',
+    'settings.rigging.commandLabel': '外部命令 / 工具路径',
+    'settings.rigging.openDocs': '文档',
     'settings.localModel.title': '本地模型一键配置',
     'settings.localModel.description':
       '按当前机器性能推荐 Ollama 模型；启动后会自动安装 Ollama、拉取模型并启动本地服务。',
@@ -1007,6 +1141,7 @@ const UI_FULL = {
     'workspace.chooseFolder': 'Choose workspace folder',
     'workspace.pickFolder': 'Choose folder…',
     'workspace.noHistory': 'No history',
+    'workspace.removeFolder': 'Remove folder',
     'canvas.unsavedTitle': 'Not saved to a file',
     'canvas.unsaved': 'Unsaved…',
     'canvas.savedJustNow': 'Saved · just now',
@@ -1052,11 +1187,21 @@ const UI_FULL = {
     'dock.imageModePlaceholder': 'Image mode · describe the image to generate, /image-mode-end to exit',
     'dock.imageModeEntered': '🎨 Image mode on · every message now has the coding model write an image prompt first, then auto-generates the image; send /image-mode-end to exit',
     'dock.imageModeExited': '↩ Image mode off · switched back to the AI coding channel and model',
+    'dock.musicModePlaceholder': 'Music mode · describe the music to generate, /music-mode-end to exit',
+    'dock.musicModeEntered': '🎵 Music mode on · every message now has the coding model write a music prompt first, then calls the music model; send /music-mode-end to exit',
+    'dock.musicModeExited': '↩ Music mode off · switched back to the AI coding channel and model',
+    'dock.threeDModePlaceholder': 'Mesh mode · describe the 3D model to generate, /mesh-mode-end to exit',
+    'dock.threeDModeEntered': '🧊 Mesh mode on · every message now has the coding model write a 3D prompt first, then calls the 3D model; send /mesh-mode-end to exit',
+    'dock.threeDModeExited': '↩ Mesh mode off · switched back to the AI coding channel and model',
     'dock.imagePlaceholder': 'Describe the image, style, subject, aspect ratio, and any text to render…',
     'dock.tabChat': 'Chat',
     'dock.tabImage': 'Images',
     'dock.imageProviderTitle': 'Image provider',
     'dock.imageModelTitle': 'Image model',
+    'dock.musicProviderTitle': 'Music provider',
+    'dock.musicModelTitle': 'Music model',
+    'dock.threeDProviderTitle': '3D provider',
+    'dock.threeDModelTitle': '3D model',
     'dock.addFileTitle': 'Add file path',
     'dock.addFileDialogTitle': 'Choose files to add to AI input',
     'dock.permissionTitle': 'Permission',
@@ -1089,6 +1234,8 @@ const UI_FULL = {
     'dock.modelStrategy.better': 'Prefer stronger models',
     'dock.modelStrategy.cheaper': 'Prefer cheaper models',
     'dock.inheritGlobal': 'Inherit global selection',
+    'dock.contextUsageTitle':
+      'Estimated: {used} / {limit} tokens used. Includes current input and chat text; hidden CLI/model prompts may make real usage higher.',
     'dock.searchPlaceholder': 'Search AI output…',
     'dock.searchAria': 'Search AI output',
     'dock.searchPrevious': 'Previous match',
@@ -1225,6 +1372,10 @@ const UI_FULL = {
     'settings.tabs.personalization': 'Personalization',
     'settings.tabs.models': 'Channels',
     'settings.tabs.imageGeneration': 'Images',
+    'settings.tabs.musicGeneration': 'Music',
+    'settings.tabs.threeDGeneration': 'Mesh',
+    'settings.tabs.rigging': 'Rigging',
+    'settings.tabs.gameExperts': 'Game Experts',
     'settings.tabs.freeChannels': 'Free Channels',
     'settings.tabs.consensus': 'Consensus',
     'settings.tabs.commands': 'Commands',
@@ -1239,6 +1390,7 @@ const UI_FULL = {
     'settings.freeChannels.modelLabel': 'Model',
     'settings.freeChannels.modelPlaceholderLocal': 'Enter the loaded model id',
     'settings.freeChannels.getKey': 'Get key',
+    'settings.freeChannels.manageKey': 'Manage key',
     'settings.freeChannels.clear': 'Clear',
     'settings.freeChannels.ready': 'Ready',
     'settings.freeChannels.needsKey': 'Needs key',
@@ -1259,18 +1411,62 @@ const UI_FULL = {
     'settings.freeChannels.localSetup': 'One-click local setup',
     'settings.freeChannels.localStatusHint':
       'Local channels check the service port and loaded models; unavailable channels are not selected directly.',
+    'settings.gameExperts.title': 'Game Experts',
+    'settings.gameExperts.description':
+      'Automatically select game-development expert perspectives and inject them into the current model prompt. Off by default.',
+    'settings.gameExperts.enabledLabel': 'Enable game experts',
+    'settings.gameExperts.enabledDesc':
+      'When enabled, game-related prompts route through gameplay, engine, UI, performance, QA, and other expert guidance.',
+    'settings.gameExperts.engineLabel': 'Engine preference',
+    'settings.gameExperts.engineDesc':
+      'Auto mode detects Unity, Unreal, Godot, or web-game keywords from the prompt.',
+    'settings.gameExperts.modeLabel': 'Expert mode',
+    'settings.gameExperts.modeDesc':
+      'Controls prompt density. Standard fits daily work; council fits complex architecture and system tradeoffs.',
+    'settings.gameExperts.maxExpertsLabel': 'Max experts per turn',
+    'settings.gameExperts.maxExpertsDesc':
+      'Caps injected experts to preserve context.',
+    'settings.gameExperts.poolTitle': 'Expert pool',
+    'settings.gameExperts.poolDesc':
+      'Disabled experts are excluded from automatic routing.',
+    'settings.gameExperts.enabledCount': '{n}/{total}',
+    'settings.gameExperts.selectAll': 'Select all',
+    'settings.gameExperts.categoryAll': 'All',
+    'settings.gameExperts.engineAuto': 'Auto detect',
+    'settings.gameExperts.engineWeb': 'Web game',
+    'settings.gameExperts.engineCustom': 'Custom',
+    'settings.gameExperts.modeLight': 'Light',
+    'settings.gameExperts.modeStandard': 'Standard',
+    'settings.gameExperts.modeCouncil': 'Council',
+    'settings.gameExperts.newExpert': 'New',
+    'settings.gameExperts.edit': 'Edit expert',
+    'settings.gameExperts.delete': 'Delete expert',
+    'settings.gameExperts.customBadge': 'Customized',
+    'settings.gameExperts.editorTitle': 'Edit expert content',
+    'settings.gameExperts.editorId': 'ID',
+    'settings.gameExperts.editorName': 'Name',
+    'settings.gameExperts.editorGroup': 'Group',
+    'settings.gameExperts.editorSummary': 'Summary',
+    'settings.gameExperts.editorRole': 'Role',
+    'settings.gameExperts.editorTriggers': 'Triggers (newline or comma separated)',
+    'settings.gameExperts.editorGuidance': 'Guidance (newline or comma separated)',
+    'settings.gameExperts.editorBoundaries': 'Boundaries (newline or comma separated)',
+    'settings.gameExperts.editorAffinity': 'Engine affinity',
+    'settings.gameExperts.editorInvalid': 'Expert name is required.',
+    'settings.gameExperts.deleteConfirm':
+      'Delete expert "{name}"? Built-in experts will be hidden from this project pool.',
     'settings.imageGeneration.title': 'Image Generation',
     'settings.imageGeneration.description':
-      'Configure the image providers used by /image and /生图 in chat. Generated images appear as part of the chat stream instead of a separate top-level image mode.',
-    'settings.imageGeneration.enabledLabel': 'Auto-detect image requests',
+      'Configure the image provider used by image mode. Send /image-mode-start in chat to enter image mode, and /image-mode-end to exit.',
+    'settings.imageGeneration.enabledLabel': 'Enable image mode',
     'settings.imageGeneration.enabledDesc':
-      'When enabled, prompts like "generate an image" or "draw a logo" call the configured image model directly. You can also type /image or /生图 explicitly.',
+      'When enabled, /image-mode-start enters image mode. Describe images there to call the configured image model, then send /image-mode-end to return to normal chat.',
     'settings.imageGeneration.showComposerModelLabel': 'Show image model selector in composer',
     'settings.imageGeneration.showComposerModelDesc':
       'Hidden by default. Enable this to switch the concrete image model from the input toolbar.',
     'settings.imageGeneration.defaultProviderLabel': 'Default image provider',
     'settings.imageGeneration.defaultProviderDesc':
-      'Used by /image, /生图, and auto-detection in chat. If it is not fully configured, another ready provider is used.',
+      'Used by image mode from /image-mode-start through /image-mode-end. If it is not fully configured, another ready provider is used.',
     'settings.imageGeneration.accountIdLabel': 'Account ID',
     'settings.imageGeneration.freeCreditProviders': 'Free-Credit Providers',
     'settings.imageGeneration.freeCreditProvidersDesc':
@@ -1281,6 +1477,80 @@ const UI_FULL = {
     'settings.imageGeneration.categoryFreeCredit': 'Free credit',
     'settings.imageGeneration.categoryCommercial': 'Commercial',
     'settings.imageGeneration.noKeyRequired': 'No key',
+    'settings.musicGeneration.title': 'Music Generation',
+    'settings.musicGeneration.description':
+      'Configure the music generation channel used by music mode. Send /music-mode-start in chat to enter music mode, and /music-mode-end to exit.',
+    'settings.musicGeneration.enabledLabel': 'Enable music generation',
+    'settings.musicGeneration.enabledDesc':
+      'When enabled, /music-mode-start enters music mode. Describe music there to call the default music provider, then send /music-mode-end to return to normal chat.',
+    'settings.musicGeneration.defaultProviderLabel': 'Default music provider',
+    'settings.musicGeneration.defaultProviderDesc':
+      'Used by music mode from /music-mode-start through /music-mode-end. If it is not fully configured, another ready provider is used.',
+    'settings.musicGeneration.officialProviders': 'Official API Providers',
+    'settings.musicGeneration.officialProvidersDesc':
+      'Official APIs and B2B APIs are preferred. Third-party aggregators are labeled in their provider notes.',
+    'settings.musicGeneration.officialApi': 'Official API',
+    'settings.musicGeneration.commercialProviders': 'Commercial Channels',
+    'settings.musicGeneration.commercialProvidersDesc':
+      'Production-first channels using official APIs or B2B APIs, suitable for paid usage and traceable billing.',
+    'settings.musicGeneration.freeProviders': 'Free Channels',
+    'settings.musicGeneration.freeProvidersDesc':
+      'Free-tier, experimental, and local model routes for validation, low-cost generation, or self-hosting. Check model licenses before commercial use.',
+    'settings.musicGeneration.categoryCommercial': 'Commercial',
+    'settings.musicGeneration.categoryFree': 'Free',
+    'settings.threeDGeneration.title': '3D Model Generation',
+    'settings.threeDGeneration.description':
+      'Configure the 3D generation channel used by Mesh mode. Send /mesh-mode-start in chat to enter Mesh mode, and /mesh-mode-end to exit.',
+    'settings.threeDGeneration.enabledLabel': 'Enable 3D generation',
+    'settings.threeDGeneration.enabledDesc':
+      'When enabled, /mesh-mode-start enters Mesh mode. Describe 3D models there to call the default 3D provider, then send /mesh-mode-end to return to normal chat.',
+    'settings.threeDGeneration.defaultProviderLabel': 'Default 3D provider',
+    'settings.threeDGeneration.defaultProviderDesc':
+      'Used by Mesh mode from /mesh-mode-start through /mesh-mode-end. If it is not fully configured, another ready provider is used.',
+    'settings.threeDGeneration.commercialProviders': 'Commercial Channels',
+    'settings.threeDGeneration.commercialProvidersDesc':
+      'Production-oriented 3D generation APIs. Usually billed per task or credits, suitable for stable usage and traceable billing.',
+    'settings.threeDGeneration.freeProviders': 'Free / Local Channels',
+    'settings.threeDGeneration.freeProvidersDesc':
+      'Hugging Face, Roblox platform routes, and local Hunyuan3D, TRELLIS, Stable Fast 3D, Shap-E, OpenLRM-style servers.',
+    'settings.threeDGeneration.categoryCommercial': 'Commercial',
+    'settings.threeDGeneration.categoryFree': 'Free/local',
+    'settings.rigging.title': 'Rigging',
+    'settings.rigging.description':
+      'Configure post-generation auto-rigging, skinning, and default animation processing for 3D characters. API providers are called directly; local tools are referenced by endpoint or command and are not bundled.',
+    'settings.rigging.enabledLabel': 'Enable auto-rigging',
+    'settings.rigging.enabledDesc':
+      'Applies only to riggable assets such as humanoids, animals, and robots. Static props like rocks, furniture, and buildings still skip rigging.',
+    'settings.rigging.defaultProviderLabel': 'Default rigging provider',
+    'settings.rigging.defaultProviderDesc':
+      'After a public GLB/FBX is generated, this provider is tried first; failures fall back to other configured providers.',
+    'settings.rigging.externalInstallNotice':
+      'Local routes do not download or bundle Blender, AccuRIG, Auto-Rig Pro, or similar tools. Install them yourself, then paste a local service endpoint or command path; otherwise they remain reference entries.',
+    'settings.rigging.onlineProviders': 'Online APIs',
+    'settings.rigging.onlineProvidersDesc':
+      'Auto-rigging and animation services callable by API. Most require a public model URL and API key.',
+    'settings.rigging.localProviders': 'Local / External Tools',
+    'settings.rigging.localProvidersDesc':
+      'Local services or desktop tool hooks. The app stores endpoints/commands only and does not bundle large dependencies.',
+    'settings.rigging.manualProviders': 'Manual Import',
+    'settings.rigging.manualProvidersDesc':
+      'Web or desktop workflows. Use them to process manually, then import the rigged FBX/GLB back into the project.',
+    'settings.rigging.categoryOnline': 'Online API',
+    'settings.rigging.categoryLocal': 'Local',
+    'settings.rigging.categoryManual': 'Manual',
+    'settings.rigging.commercialChannel': 'Commercial',
+    'settings.rigging.commercialChannelDesc':
+      'Online auto-rigging / animation services reachable directly via API. They usually need a publicly accessible model URL and an API key; the key is shared with the Mesh channel, so configure it once.',
+    'settings.rigging.freeChannel': 'Free',
+    'settings.rigging.freeChannelDesc':
+      'Local servers, desktop tools, and manual-import routes (Blender, AccuRIG, Mixamo, etc.). The app only stores endpoints / commands and bundles no heavy dependencies.',
+    'settings.rigging.inheritedPlaceholder': 'Inherited from Mesh channel key',
+    'settings.rigging.inheritedHint':
+      'Inherits the “{source}” key from the Mesh channel — no need to re-enter. Fill in a value here to override.',
+    'settings.rigging.manualOnly': 'Manual import',
+    'settings.rigging.needsCommand': 'Needs command',
+    'settings.rigging.commandLabel': 'External command / tool path',
+    'settings.rigging.openDocs': 'Docs',
     'settings.localModel.title': 'One-click Local Model Setup',
     'settings.localModel.description':
       'Pick an Ollama model recommended for this machine; setup installs Ollama, pulls the model, and starts the local service.',
@@ -1650,6 +1920,7 @@ const UI_FULL = {
     'workspace.chooseFolder': 'Elegir carpeta del espacio de trabajo',
     'workspace.pickFolder': 'Elegir carpeta…',
     'workspace.noHistory': 'Sin historial',
+    'workspace.removeFolder': 'Eliminar carpeta',
     'canvas.unsavedTitle': 'No guardado en un archivo',
     'canvas.unsaved': 'Sin guardar…',
     'canvas.savedJustNow': 'Guardado · ahora mismo',
@@ -2049,6 +2320,7 @@ const UI_FULL = {
     'workspace.chooseFolder': "Choisir le dossier de l'espace de travail",
     'workspace.pickFolder': 'Choisir un dossier…',
     'workspace.noHistory': 'Aucun historique',
+    'workspace.removeFolder': 'Supprimer le dossier',
     'canvas.unsavedTitle': 'Non enregistré dans un fichier',
     'canvas.unsaved': 'Non enregistré…',
     'canvas.savedJustNow': "Enregistré · à l'instant",
@@ -2448,6 +2720,7 @@ const UI_FULL = {
     'workspace.chooseFolder': 'Выбрать папку рабочей области',
     'workspace.pickFolder': 'Выбрать папку…',
     'workspace.noHistory': 'Нет истории',
+    'workspace.removeFolder': 'Удалить папку',
     'canvas.unsavedTitle': 'Не сохранено в файл',
     'canvas.unsaved': 'Не сохранено…',
     'canvas.savedJustNow': 'Сохранено · только что',
@@ -2847,6 +3120,7 @@ const UI_FULL = {
     'workspace.chooseFolder': 'اختيار مجلد مساحة العمل',
     'workspace.pickFolder': 'اختيار مجلد…',
     'workspace.noHistory': 'لا يوجد سجل',
+    'workspace.removeFolder': 'إزالة المجلد',
     'canvas.unsavedTitle': 'لم يُحفظ في ملف',
     'canvas.unsaved': 'غير محفوظ…',
     'canvas.savedJustNow': 'تم الحفظ · للتو',
@@ -3246,6 +3520,7 @@ const UI_FULL = {
     'workspace.chooseFolder': 'कार्यस्थान फ़ोल्डर चुनें',
     'workspace.pickFolder': 'फ़ोल्डर चुनें…',
     'workspace.noHistory': 'कोई इतिहास नहीं',
+    'workspace.removeFolder': 'फ़ोल्डर हटाएँ',
     'canvas.unsavedTitle': 'फ़ाइल में सहेजा नहीं गया',
     'canvas.unsaved': 'असहेजा…',
     'canvas.savedJustNow': 'सहेजा गया · अभी-अभी',
@@ -3645,6 +3920,7 @@ const UI_FULL = {
     'workspace.chooseFolder': 'ワークスペースフォルダを選択',
     'workspace.pickFolder': 'フォルダを選択…',
     'workspace.noHistory': '履歴なし',
+    'workspace.removeFolder': 'フォルダを削除',
     'canvas.unsavedTitle': 'ファイルに未保存',
     'canvas.unsaved': '未保存…',
     'canvas.savedJustNow': '保存済み · たった今',
@@ -4044,6 +4320,7 @@ const UI_FULL = {
     'workspace.chooseFolder': 'Escolher pasta da área de trabalho',
     'workspace.pickFolder': 'Escolher pasta…',
     'workspace.noHistory': 'Sem histórico',
+    'workspace.removeFolder': 'Remover pasta',
     'canvas.unsavedTitle': 'Não guardado num ficheiro',
     'canvas.unsaved': 'Não guardado…',
     'canvas.savedJustNow': 'Guardado · agora',
@@ -4443,6 +4720,7 @@ const UI_FULL = {
     'workspace.chooseFolder': 'Arbeitsbereich-Ordner wählen',
     'workspace.pickFolder': 'Ordner wählen…',
     'workspace.noHistory': 'Kein Verlauf',
+    'workspace.removeFolder': 'Ordner entfernen',
     'canvas.unsavedTitle': 'Noch nicht in Datei gespeichert',
     'canvas.unsaved': 'Nicht gespeichert…',
     'canvas.savedJustNow': 'Gespeichert · gerade eben',
@@ -4855,12 +5133,12 @@ export function localeAiName(locale: Locale): string {
 }
 
 export function languageAdaptationPrompt(locale: Locale): string {
-  if (locale === DEFAULT_LOCALE) return '';
   const language = localeAiName(locale);
   return [
     '',
-    `语言适配：当前界面语言是 ${language} (${locale})。`,
-    `除非用户明确要求其他语言，请用 ${language} 输出说明，并将 workflow 名称、节点标签、节点 prompt 等用户可见内容写成 ${language}。`,
+    `语言要求（高优先级）：当前界面语言是 ${language} (${locale})。`,
+    `除非用户在本轮明确要求换用其他语言，所有面向用户的说明、回答、workflow 名称、节点标签、节点 prompt 等可见内容都必须用 ${language} 输出。`,
+    `不要因为代码、报错、英文上下文或工具输出而擅自切换成英文或其他语言。`,
   ].join('\n');
 }
 

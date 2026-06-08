@@ -58,6 +58,10 @@ describe('image generation settings and routing', () => {
 
   it('uses direct credential and endpoint links for image providers', () => {
     expect(imageProviderBaseUrl('pollinations')).toBe('https://gen.pollinations.ai');
+    expect(imageProviderBaseUrl('recraft')).toBe('https://external.api.recraft.ai/v1');
+    expect(imageProviderBaseUrl('google-imagen')).toBe(
+      'https://generativelanguage.googleapis.com/v1beta',
+    );
     expect(imageProviderById('pollinations').credentialUrl).toBe(
       'https://enter.pollinations.ai',
     );
@@ -72,6 +76,9 @@ describe('image generation settings and routing', () => {
     );
     expect(imageProviderById('ai-horde').credentialUrl).toBe(
       'https://stablehorde.net/register',
+    );
+    expect(imageProviderById('replicate').credentialUrl).toBe(
+      'https://replicate.com/account/api-tokens',
     );
   });
 
@@ -89,12 +96,26 @@ describe('image generation settings and routing', () => {
       'pollinations',
       'ai-horde',
       'local-comfyui',
+      'local-vllm-image',
+      'replicate',
+      'fal-ai',
+      'runware',
     ]);
     expect(commercial).toEqual([
+      'google-gemini-image',
+      'google-imagen',
+      'bfl-flux',
+      'ideogram',
+      'recraft',
+      'stability-ai',
+      'adobe-firefly',
+      'luma-photon',
+      'xai-grok-imagine',
       'zhipu-cogview',
       'dashscope-wanx',
       'minimax',
       'volcengine-seedream',
+      'byteplus-seedream',
     ]);
   });
 
@@ -131,6 +152,87 @@ describe('image generation settings and routing', () => {
     expect(result.images).toEqual(['https://example.com/generated.png']);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.minimax.io/v1/image_generation',
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    );
+  });
+
+  it('calls OpenAI-compatible image providers such as Recraft', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ url: 'https://example.com/recraft.png' }],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+
+    const result = await generateImage(
+      {
+        prompt: '/image brand icon',
+        providerId: 'recraft',
+      },
+      {
+        ...DEFAULT_IMAGE_GENERATION_SETTINGS,
+        providerKeys: { recraft: 'test-key' },
+        providerAccountIds: {},
+        providerBaseUrls: {},
+        providerModels: {},
+      },
+    );
+
+    expect(result.images).toEqual(['https://example.com/recraft.png']);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://external.api.recraft.ai/v1/images/generations',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-key',
+          'Content-Type': 'application/json',
+        }),
+      }),
+    );
+  });
+
+  it('parses Google Imagen base64 predictions', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          predictions: [
+            {
+              bytesBase64Encoded: 'aW1hZ2U=',
+              mimeType: 'image/png',
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+
+    const result = await generateImage(
+      {
+        prompt: '/image product photo',
+        providerId: 'google-imagen',
+      },
+      {
+        ...DEFAULT_IMAGE_GENERATION_SETTINGS,
+        providerKeys: { 'google-imagen': 'test-key' },
+        providerAccountIds: {},
+        providerBaseUrls: {},
+        providerModels: {},
+      },
+    );
+
+    expect(result.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=test-key',
       expect.objectContaining({
         method: 'POST',
       }),

@@ -5,7 +5,7 @@
  * headless CLI run is observably identical to a desktop run.
  *
  * argv (claude):  -p --output-format stream-json --verbose
- *                 [--bare                 (API-key relay/free channel only)]
+ *                 [--bare                 (API-key relay/free channel only, when supported)]
  *                 [--strict-mcp-config]
  *                 [--resume <sid> | --session-id <sid>]
  *                 [--model <m>            (filtered by shouldPassModel)]
@@ -193,7 +193,8 @@ function normalizeSpawnEnv(env: NodeJS.ProcessEnv): void {
 
 function mcpEnabled(): boolean {
   const v = (process.env.FREEULTRACODE_ENABLE_MCP ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes';
+  // Default on: only an explicit disable value turns MCP off.
+  return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
 }
 
 /** Kill a process tree: Windows `taskkill /PID <pid> /T /F`, *nix `kill -TERM`. */
@@ -237,11 +238,37 @@ function resolveLaunch(
   return { command: binary, args, verbatim: false };
 }
 
+const claudeBareSupportCache = new Map<string, boolean>();
+
+function claudeHelpSupportsBare(text: string): boolean {
+  return text.includes('--bare');
+}
+
+function claudeCliSupportsBare(binary: string): boolean {
+  const cached = claudeBareSupportCache.get(binary);
+  if (cached != null) return cached;
+
+  const launch = resolveLaunch(binary, ['--help']);
+  const result = spawnSync(launch.command, launch.args, {
+    encoding: 'utf8',
+    env: { ...process.env, DISABLE_AUTOUPDATER: '1' },
+    input: '',
+    timeout: 5000,
+    windowsHide: true,
+    windowsVerbatimArguments: launch.verbatim,
+  });
+  const helpText = `${String(result.stdout ?? '')}\n${String(result.stderr ?? '')}`;
+  const supported = claudeHelpSupportsBare(helpText);
+  claudeBareSupportCache.set(binary, supported);
+  return supported;
+}
+
 /** Build the claude / codex argv (mirrors the Rust `args` assembly). */
 function buildArgs(
   opts: SpawnCliAgentOpts,
   protocol: string,
   codexOutPath: string | undefined,
+  binary: string,
 ): { args: string[]; workdir?: string; disableAutoupdater: boolean } {
   const args: string[] = [];
   let workdir: string | undefined;
@@ -277,7 +304,7 @@ function buildArgs(
   } else {
     // claude (and any non-codex protocol falls through to the claude shape).
     args.push('-p', '--output-format', 'stream-json', '--verbose');
-    if (shouldRunClaudeBare(opts.env)) {
+    if (shouldRunClaudeBare(opts.env) && claudeCliSupportsBare(binary)) {
       args.push('--bare');
     }
     disableAutoupdater = true;
@@ -340,7 +367,12 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
     }
   };
 
-  const { args, workdir, disableAutoupdater } = buildArgs(opts, protocol, codexOutPath);
+  const { args, workdir, disableAutoupdater } = buildArgs(
+    opts,
+    protocol,
+    codexOutPath,
+    binary,
+  );
 
   return new Promise<string>((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env };

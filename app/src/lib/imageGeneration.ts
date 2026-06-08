@@ -4,10 +4,24 @@ export type ImageProviderId =
   | 'pollinations'
   | 'ai-horde'
   | 'local-comfyui'
+  | 'local-vllm-image'
+  | 'google-gemini-image'
+  | 'google-imagen'
+  | 'bfl-flux'
+  | 'ideogram'
+  | 'recraft'
+  | 'stability-ai'
+  | 'adobe-firefly'
+  | 'luma-photon'
+  | 'xai-grok-imagine'
   | 'zhipu-cogview'
   | 'dashscope-wanx'
   | 'minimax'
-  | 'volcengine-seedream';
+  | 'volcengine-seedream'
+  | 'byteplus-seedream'
+  | 'replicate'
+  | 'fal-ai'
+  | 'runware';
 
 export type ImageProviderCategory = 'commercial' | 'free-credit';
 
@@ -17,6 +31,18 @@ type ImageProviderApiKind =
   | 'ai-horde'
   | 'comfyui'
   | 'siliconflow'
+  | 'openai-images'
+  | 'google-gemini-image'
+  | 'google-imagen'
+  | 'bfl-flux'
+  | 'ideogram-v4'
+  | 'stability-ai'
+  | 'adobe-firefly'
+  | 'luma-photon'
+  | 'xai-images'
+  | 'replicate'
+  | 'fal-ai'
+  | 'runware'
   | 'zhipu-openai'
   | 'dashscope-wanx'
   | 'minimax'
@@ -36,6 +62,10 @@ export interface ImageProviderDefinition {
   supportsBaseUrl?: boolean;
   endpointPlaceholder: string;
   credentialUrl?: string;
+  keyLabel?: string;
+  keyPlaceholder?: string;
+  accountIdLabel?: string;
+  accountIdPlaceholder?: string;
   note: string;
 }
 
@@ -149,6 +179,206 @@ export const IMAGE_PROVIDERS: ImageProviderDefinition[] = [
     note: 'Uses a local ComfyUI HTTP server. The first version calls a simple custom /prompt-text-to-image style endpoint when present.',
   },
   {
+    id: 'local-vllm-image',
+    label: '本地 OpenAI Images / vLLM',
+    category: 'free-credit',
+    apiKind: 'openai-images',
+    defaultModel: 'HunyuanImage-3.0',
+    models: [
+      'HunyuanImage-3.0',
+      'FLUX.2',
+      'FLUX.1-dev',
+      'Qwen-Image',
+      'Qwen-Image-Edit',
+      'Sana',
+      'OmniGen2',
+      'HiDream-I1',
+      'HiDream-E1',
+      'BAGEL',
+      'Kolors',
+      'SD3.5',
+      'PixArt-Sigma',
+      'Lumina-Image-2.0',
+      'Infinity',
+      'Janus-Pro',
+    ],
+    needsKey: false,
+    local: true,
+    defaultBaseUrl: 'http://127.0.0.1:8000/v1',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'http://127.0.0.1:8000/v1',
+    credentialUrl: 'https://docs.vllm.ai',
+    note: 'Self-hosted OpenAI-compatible image endpoint. Use it for FLUX.2, Qwen-Image, HunyuanImage-3.0, Sana, OmniGen2, HiDream, BAGEL, Kolors, SD3.5, and lower-priority research models when your local server exposes /v1/images/generations.',
+  },
+  {
+    id: 'google-gemini-image',
+    label: 'Google Nano Banana / Gemini Image',
+    category: 'commercial',
+    apiKind: 'google-gemini-image',
+    defaultModel: 'gemini-2.5-flash-image-preview',
+    models: [
+      'gemini-2.5-flash-image-preview',
+      'gemini-3-pro-image-preview',
+    ],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://generativelanguage.googleapis.com/v1beta',
+    credentialUrl: 'https://aistudio.google.com/apikey',
+    note: 'Google Gemini image generation path for Nano Banana-style multi-turn image editing and strong context. Uses generateContent with IMAGE response modality.',
+  },
+  {
+    id: 'google-imagen',
+    label: 'Google Imagen 4',
+    category: 'commercial',
+    apiKind: 'google-imagen',
+    defaultModel: 'imagen-4.0-generate-001',
+    models: [
+      'imagen-4.0-generate-001',
+      'imagen-4.0-ultra-generate-001',
+      'imagen-4.0-fast-generate-001',
+      'imagen-3.0-generate-002',
+    ],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://generativelanguage.googleapis.com/v1beta',
+    credentialUrl: 'https://aistudio.google.com/apikey',
+    note: 'Google Imagen REST path for enterprise/Vertex-aligned quality. Uses models/{model}:predict and parses bytesBase64Encoded results.',
+  },
+  {
+    id: 'bfl-flux',
+    label: 'Black Forest Labs FLUX',
+    category: 'commercial',
+    apiKind: 'bfl-flux',
+    defaultModel: 'flux-pro-1.1',
+    models: [
+      'flux-2-pro',
+      'flux-2-flex',
+      'flux-kontext-pro',
+      'flux-pro-1.1',
+      'flux-pro-1.1-ultra',
+      'flux-dev',
+    ],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://api.bfl.ai',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://api.bfl.ai',
+    credentialUrl: 'https://api.us1.bfl.ai',
+    keyPlaceholder: 'BFL API key',
+    note: 'Direct BFL API route for FLUX.2/FLUX.1.1/Kontext/Fill style generation and editing. Polls the BFL result endpoint until an image is ready.',
+  },
+  {
+    id: 'ideogram',
+    label: 'Ideogram 4.0',
+    category: 'commercial',
+    apiKind: 'ideogram-v4',
+    defaultModel: 'ideogram-v4',
+    models: ['ideogram-v4', 'ideogram-v4-turbo', 'ideogram-v3'],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://api.ideogram.ai',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://api.ideogram.ai',
+    credentialUrl: 'https://developer.ideogram.ai',
+    keyPlaceholder: 'Ideogram API key',
+    note: 'Poster, brand, logo, and typography-heavy image route. Uses Ideogram v4 generate endpoint with multipart form input.',
+  },
+  {
+    id: 'recraft',
+    label: 'Recraft V4.1 / V4',
+    category: 'commercial',
+    apiKind: 'openai-images',
+    defaultModel: 'recraftv4.1',
+    models: ['recraftv4.1', 'recraftv4', 'recraft20b'],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://external.api.recraft.ai/v1',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://external.api.recraft.ai/v1',
+    credentialUrl: 'https://www.recraft.ai/profile/api',
+    keyPlaceholder: 'Recraft API key',
+    note: 'Design-first commercial visual route with strong brand-color, icon, vector/SVG, and marketing asset workflows. Uses OpenAI-compatible /images/generations.',
+  },
+  {
+    id: 'stability-ai',
+    label: 'Stability AI Stable Image',
+    category: 'commercial',
+    apiKind: 'stability-ai',
+    defaultModel: 'stable-image-ultra',
+    models: [
+      'stable-image-ultra',
+      'stable-image-core',
+      'sd3.5-large',
+      'sd3.5-large-turbo',
+      'sd3.5-medium',
+      'sdxl',
+    ],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://api.stability.ai/v2beta',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://api.stability.ai/v2beta',
+    credentialUrl: 'https://platform.stability.ai/account/keys',
+    keyPlaceholder: 'sk-...',
+    note: 'Stable Image / SD3.5 / SDXL route. Supports mature generation/edit/upscale ecosystem; this adapter starts with text-to-image generation.',
+  },
+  {
+    id: 'adobe-firefly',
+    label: 'Adobe Firefly Image 4',
+    category: 'commercial',
+    apiKind: 'adobe-firefly',
+    defaultModel: 'image4_standard',
+    models: ['image4_standard', 'image4_ultra', 'image3'],
+    needsKey: true,
+    needsAccountId: true,
+    local: false,
+    defaultBaseUrl: 'https://firefly-api.adobe.io/v3',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://firefly-api.adobe.io/v3',
+    credentialUrl: 'https://developer.adobe.com/firefly-services/docs/firefly-api/getting_started/',
+    keyLabel: 'Client Secret',
+    keyPlaceholder: 'Adobe client secret',
+    accountIdLabel: 'Client ID',
+    accountIdPlaceholder: 'Adobe client ID',
+    note: 'Enterprise compliance and brand workflow route. Uses Adobe IMS client-credentials token exchange, then Firefly image generation with model version selection.',
+  },
+  {
+    id: 'luma-photon',
+    label: 'Luma Photon',
+    category: 'commercial',
+    apiKind: 'luma-photon',
+    defaultModel: 'photon-1',
+    models: ['photon-1', 'photon-flash-1'],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://api.lumalabs.ai/dream-machine/v1',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://api.lumalabs.ai/dream-machine/v1',
+    credentialUrl: 'https://lumalabs.ai/api/keys',
+    keyPlaceholder: 'luma_...',
+    note: 'Fast text-to-image and reference/style workflow route. Starts image generations and polls the Luma generation resource until assets are ready.',
+  },
+  {
+    id: 'xai-grok-imagine',
+    label: 'xAI Grok Imagine',
+    category: 'commercial',
+    apiKind: 'xai-images',
+    defaultModel: 'grok-2-image',
+    models: ['grok-2-image', 'grok-2-image-1212'],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://api.x.ai/v1',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://api.x.ai/v1',
+    credentialUrl: 'https://console.x.ai',
+    keyPlaceholder: 'xai-...',
+    note: 'xAI image route for text-to-image with batch/aspect/resolution controls. Uses the OpenAI-style images/generations endpoint.',
+  },
+  {
     id: 'zhipu-cogview',
     label: '智谱 CogView',
     category: 'commercial',
@@ -170,11 +400,13 @@ export const IMAGE_PROVIDERS: ImageProviderDefinition[] = [
     apiKind: 'dashscope-wanx',
     defaultModel: 'wan2.6-t2i',
     models: [
+      'qwen-image-2.0',
+      'qwen-image-max',
+      'qwen-image-plus',
+      'qwen-image',
       'wan2.6-t2i',
       'wan2.5-t2i-preview',
       'wan2.2-t2i-flash',
-      'qwen-image-plus',
-      'qwen-image',
     ],
     needsKey: true,
     local: false,
@@ -219,12 +451,130 @@ export const IMAGE_PROVIDERS: ImageProviderDefinition[] = [
     credentialUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey',
     note: '中文商业服务。方舟图片生成 API 兼容 OpenAI images/generations 路径，Seedream 支持高分辨率和组图能力。',
   },
+  {
+    id: 'byteplus-seedream',
+    label: 'BytePlus Seedream',
+    category: 'commercial',
+    apiKind: 'volcengine-openai',
+    defaultModel: 'seedream-4-0',
+    models: [
+      'seedream-4-0',
+      'seedream-3-0-t2i',
+      'seedream-3-0-t2i-250415',
+    ],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://ark.ap-southeast.bytepluses.com/api/v3',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://ark.ap-southeast.bytepluses.com/api/v3',
+    credentialUrl: 'https://console.byteplus.com/ark',
+    keyPlaceholder: 'BytePlus ModelArk API key',
+    note: 'BytePlus/ByteDance Seedream global route. OpenAI-compatible image generation; useful for high consistency, reasoning/knowledge-heavy prompts, and large output workflows.',
+  },
+  {
+    id: 'replicate',
+    label: 'Replicate',
+    category: 'free-credit',
+    apiKind: 'replicate',
+    defaultModel: 'black-forest-labs/flux-1.1-pro',
+    models: [
+      'black-forest-labs/flux-1.1-pro',
+      'black-forest-labs/flux-schnell',
+      'black-forest-labs/flux-dev',
+      'ideogram-ai/ideogram-v2',
+      'recraft-ai/recraft-v3',
+      'stability-ai/stable-diffusion-3.5-large',
+      'qwen/qwen-image',
+    ],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://api.replicate.com/v1',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://api.replicate.com/v1',
+    credentialUrl: 'https://replicate.com/account/api-tokens',
+    keyPlaceholder: 'r8_...',
+    note: 'Model aggregator route. Best first landing step for quickly expanding the image model pool; choose any Replicate owner/model or owner/model:version string.',
+  },
+  {
+    id: 'fal-ai',
+    label: 'fal.ai',
+    category: 'free-credit',
+    apiKind: 'fal-ai',
+    defaultModel: 'fal-ai/flux-pro/v1.1',
+    models: [
+      'fal-ai/flux-pro/v1.1',
+      'fal-ai/flux/dev',
+      'fal-ai/flux/schnell',
+      'fal-ai/ideogram/v3',
+      'fal-ai/recraft-v3',
+      'fal-ai/stable-diffusion-v35-large',
+      'fal-ai/qwen-image',
+    ],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://queue.fal.run',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://queue.fal.run',
+    credentialUrl: 'https://fal.ai/dashboard/keys',
+    keyPlaceholder: 'fal key',
+    note: 'Fast aggregator route with many image/video models. Uses fal queue API and polls returned status/response URLs.',
+  },
+  {
+    id: 'runware',
+    label: 'Runware',
+    category: 'free-credit',
+    apiKind: 'runware',
+    defaultModel: 'runware:100@1',
+    models: [
+      'runware:100@1',
+      'runware:101@1',
+      'civitai:4384@128713',
+      'blackforestlabs:1@1',
+    ],
+    needsKey: true,
+    local: false,
+    defaultBaseUrl: 'https://api.runware.ai/v1',
+    supportsBaseUrl: true,
+    endpointPlaceholder: 'https://api.runware.ai/v1',
+    credentialUrl: 'https://my.runware.ai/keys',
+    keyPlaceholder: 'Runware API key',
+    note: 'Aggregator route with low-latency imageInference tasks. Model IDs come from the Runware catalog; override the model field for specific FLUX/Recraft/Ideogram/Qwen routes.',
+  },
 ];
 
 const IMAGE_PROVIDER_BY_ID = new Map(IMAGE_PROVIDERS.map((provider) => [provider.id, provider]));
 
 function encodeModelPath(model: string): string {
   return model.split('/').map((part) => encodeURIComponent(part)).join('/');
+}
+
+function requestHeaders(
+  providerId: ImageProviderId,
+  settings: ImageGenerationSettings,
+  contentType = 'application/json',
+): Record<string, string> {
+  const provider = imageProviderById(providerId);
+  const apiKey = settings.providerKeys[providerId]?.trim();
+  if (provider.needsKey && !apiKey) throw new Error(`${provider.label} API key is missing.`);
+  const headers: Record<string, string> = {};
+  if (contentType) headers['Content-Type'] = contentType;
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  return headers;
+}
+
+function appendFormValue(
+  form: FormData,
+  key: string,
+  value: string | number | boolean | undefined,
+): void {
+  if (value === undefined) return;
+  form.set(key, String(value));
+}
+
+function imageDataUrl(data: string, mimeType = 'image/png'): string {
+  const trimmed = data.trim();
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('data:')) return trimmed;
+  return `data:${mimeType};base64,${trimmed}`;
 }
 
 export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
@@ -429,14 +779,37 @@ async function generateWithProvider(
       return generateAiHorde(prompt, model, settings, signal);
     case 'siliconflow':
       return generateSiliconFlow(prompt, model, settings, signal);
+    case 'openai-images':
     case 'zhipu-openai':
       return generateOpenAiImages(providerId, prompt, model, settings, signal);
+    case 'google-gemini-image':
+      return generateGoogleGeminiImage(prompt, model, settings, signal);
+    case 'google-imagen':
+      return generateGoogleImagen(prompt, model, settings, signal);
+    case 'bfl-flux':
+      return generateBflFlux(prompt, model, settings, signal);
+    case 'ideogram-v4':
+      return generateIdeogram(prompt, model, settings, signal);
+    case 'stability-ai':
+      return generateStabilityAi(prompt, model, settings, signal);
+    case 'adobe-firefly':
+      return generateAdobeFirefly(prompt, model, settings, signal);
+    case 'luma-photon':
+      return generateLumaPhoton(prompt, model, settings, signal);
+    case 'xai-images':
+      return generateXaiImages(prompt, model, settings, signal);
+    case 'replicate':
+      return generateReplicate(prompt, model, settings, signal);
+    case 'fal-ai':
+      return generateFalAi(prompt, model, settings, signal);
+    case 'runware':
+      return generateRunware(prompt, model, settings, signal);
     case 'dashscope-wanx':
       return generateDashScopeWanx(prompt, model, settings, signal);
     case 'minimax':
       return generateMiniMax(prompt, model, settings, signal);
     case 'volcengine-openai':
-      return generateVolcengineSeedream(prompt, model, settings, signal);
+      return generateVolcengineSeedream(providerId, prompt, model, settings, signal);
     case 'comfyui':
       return generateComfyUi(prompt, model, settings, signal);
   }
@@ -532,13 +905,14 @@ async function generateOpenAiImages(
 ): Promise<string[]> {
   const provider = imageProviderById(providerId);
   const apiKey = settings.providerKeys[providerId]?.trim();
-  if (!apiKey) throw new Error(`${provider.label} API key is missing.`);
+  if (provider.needsKey && !apiKey) throw new Error(`${provider.label} API key is missing.`);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const response = await fetch(`${imageProviderBaseUrl(providerId, settings)}/images/generations`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({
       model,
       prompt,
@@ -546,6 +920,427 @@ async function generateOpenAiImages(
       size: '1024x1024',
       response_format: 'url',
     }),
+    signal,
+  });
+  return imagesFromResponse(response);
+}
+
+async function generateGoogleGeminiImage(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const apiKey = settings.providerKeys['google-gemini-image']?.trim();
+  if (!apiKey) throw new Error('Google API key is missing.');
+  const response = await fetch(
+    `${imageProviderBaseUrl('google-gemini-image', settings)}/models/${encodeURIComponent(
+      model,
+    )}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          responseModalities: ['TEXT', 'IMAGE'],
+        },
+      }),
+      signal,
+    },
+  );
+  return imagesFromResponse(response);
+}
+
+async function generateGoogleImagen(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const apiKey = settings.providerKeys['google-imagen']?.trim();
+  if (!apiKey) throw new Error('Google API key is missing.');
+  const response = await fetch(
+    `${imageProviderBaseUrl('google-imagen', settings)}/models/${encodeURIComponent(
+      model,
+    )}:predict?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instances: [{ prompt }],
+        parameters: {
+          sampleCount: 1,
+          aspectRatio: '1:1',
+          personGeneration: 'allow_adult',
+        },
+      }),
+      signal,
+    },
+  );
+  return imagesFromResponse(response);
+}
+
+async function generateBflFlux(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const apiKey = settings.providerKeys['bfl-flux']?.trim();
+  if (!apiKey) throw new Error('BFL API key is missing.');
+  const baseUrl = imageProviderBaseUrl('bfl-flux', settings);
+  const response = await fetch(`${baseUrl}/v1/${encodeModelPath(model)}`, {
+    method: 'POST',
+    headers: {
+      'x-key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      prompt,
+      width: 1024,
+      height: 1024,
+      output_format: 'png',
+      safety_tolerance: 2,
+    }),
+    signal,
+  });
+  const started = await readJsonResponse(response);
+  const immediate = imagesFromJson(started);
+  if (immediate.length > 0) return immediate;
+  const requestId =
+    stringValue(started.id) ||
+    stringValue(started.request_id) ||
+    stringValue(started.polling_url);
+  if (!requestId) throw new Error('BFL did not return a request id.');
+  for (let i = 0; i < 120; i += 1) {
+    await delay(1000, signal);
+    const statusUrl = /^https?:\/\//i.test(requestId)
+      ? requestId
+      : `${baseUrl}/v1/get_result?id=${encodeURIComponent(requestId)}`;
+    const statusResponse = await fetch(statusUrl, {
+      headers: { 'x-key': apiKey },
+      signal,
+    });
+    const status = await readJsonResponse(statusResponse);
+    const state = stringValue(status.status).toLowerCase();
+    if (state === 'error' || state === 'failed') {
+      throw new Error(stringValue(status.error) || 'BFL generation failed.');
+    }
+    const images = imagesFromJson(status);
+    if (images.length > 0) return images;
+  }
+  throw new Error('BFL job timed out before an image was ready.');
+}
+
+async function generateIdeogram(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const apiKey = settings.providerKeys.ideogram?.trim();
+  if (!apiKey) throw new Error('Ideogram API key is missing.');
+  const form = new FormData();
+  appendFormValue(form, 'text_prompt', prompt);
+  appendFormValue(form, 'rendering_speed', model === 'ideogram-v4-turbo' ? 'TURBO' : 'DEFAULT');
+  appendFormValue(form, 'aspect_ratio', '1x1');
+  const response = await fetch(`${imageProviderBaseUrl('ideogram', settings)}/v1/ideogram-v4/generate`, {
+    method: 'POST',
+    headers: { 'Api-Key': apiKey },
+    body: form,
+    signal,
+  });
+  return imagesFromResponse(response);
+}
+
+async function generateStabilityAi(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const apiKey = settings.providerKeys['stability-ai']?.trim();
+  if (!apiKey) throw new Error('Stability AI API key is missing.');
+  const form = new FormData();
+  appendFormValue(form, 'prompt', prompt);
+  appendFormValue(form, 'output_format', 'png');
+  const endpoint =
+    model === 'stable-image-ultra'
+      ? '/stable-image/generate/ultra'
+      : model === 'stable-image-core'
+        ? '/stable-image/generate/core'
+        : model === 'sdxl'
+          ? '/stable-image/generate/sdxl'
+          : '/stable-image/generate/sd3';
+  if (endpoint.endsWith('/sd3')) appendFormValue(form, 'model', model);
+  const response = await fetch(`${imageProviderBaseUrl('stability-ai', settings)}${endpoint}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'image/*',
+    },
+    body: form,
+    signal,
+  });
+  return imagesFromResponse(response);
+}
+
+async function generateAdobeFirefly(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const clientId = settings.providerAccountIds['adobe-firefly']?.trim();
+  const clientSecret = settings.providerKeys['adobe-firefly']?.trim();
+  if (!clientId || !clientSecret) {
+    throw new Error('Adobe Firefly Client ID or Client Secret is missing.');
+  }
+  const tokenBody = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: 'openid,AdobeID,firefly_api,ff_apis',
+  });
+  const tokenResponse = await fetch('https://ims-na1.adobelogin.com/ims/token/v3', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: tokenBody,
+    signal,
+  });
+  const tokenJson = await readJsonResponse(tokenResponse);
+  const token = stringValue(tokenJson.access_token) || stringValue(tokenJson.accessToken);
+  if (!token) throw new Error('Adobe IMS did not return an access token.');
+  const response = await fetch(`${imageProviderBaseUrl('adobe-firefly', settings)}/images/generate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'x-api-key': clientId,
+      'x-model-version': model,
+    },
+    body: JSON.stringify({
+      prompt,
+      numVariations: 1,
+      size: { width: 2048, height: 2048 },
+      contentClass: 'photo',
+    }),
+    signal,
+  });
+  return imagesFromResponse(response);
+}
+
+async function generateLumaPhoton(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const apiKey = settings.providerKeys['luma-photon']?.trim();
+  if (!apiKey) throw new Error('Luma API key is missing.');
+  const baseUrl = imageProviderBaseUrl('luma-photon', settings);
+  const response = await fetch(`${baseUrl}/generations/image`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      prompt,
+      model,
+      aspect_ratio: '1:1',
+    }),
+    signal,
+  });
+  const started = await readJsonResponse(response);
+  const immediate = imagesFromJson(started);
+  if (immediate.length > 0 && isTerminalSuccess(started)) return immediate;
+  const id = stringValue(started.id) || stringValue(started.generation_id);
+  if (!id && immediate.length > 0) return immediate;
+  if (!id) throw new Error('Luma did not return a generation id.');
+  for (let i = 0; i < 120; i += 1) {
+    await delay(1500, signal);
+    const statusResponse = await fetch(`${baseUrl}/generations/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal,
+    });
+    const status = await readJsonResponse(statusResponse);
+    const state = stringValue(status.state).toLowerCase();
+    if (state === 'failed' || state === 'error') {
+      throw new Error(stringValue(status.failure_reason) || 'Luma generation failed.');
+    }
+    const images = imagesFromJson(status);
+    if (images.length > 0 && (state === 'completed' || state === 'succeeded' || state === 'ready')) {
+      return images;
+    }
+  }
+  throw new Error('Luma job timed out before an image was ready.');
+}
+
+async function generateXaiImages(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const response = await fetch(`${imageProviderBaseUrl('xai-grok-imagine', settings)}/images/generations`, {
+    method: 'POST',
+    headers: requestHeaders('xai-grok-imagine', settings),
+    body: JSON.stringify({
+      model,
+      prompt,
+      n: 1,
+      aspect_ratio: '1:1',
+      response_format: 'url',
+    }),
+    signal,
+  });
+  return imagesFromResponse(response);
+}
+
+async function generateReplicate(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const apiKey = settings.providerKeys.replicate?.trim();
+  if (!apiKey) throw new Error('Replicate API token is missing.');
+  const baseUrl = imageProviderBaseUrl('replicate', settings);
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    Prefer: 'wait=60',
+  };
+  const versionMatch = /^([^:]+):(.+)$/.exec(model);
+  const modelPath = versionMatch?.[1] ?? model;
+  const version = versionMatch?.[2];
+  const endpoint = version
+    ? `${baseUrl}/predictions`
+    : `${baseUrl}/models/${encodeModelPath(modelPath)}/predictions`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      ...(version ? { version } : {}),
+      input: {
+        prompt,
+        aspect_ratio: '1:1',
+        output_format: 'png',
+        num_outputs: 1,
+      },
+    }),
+    signal,
+  });
+  const started = await readJsonResponse(response);
+  const immediate = imagesFromJson(started);
+  if (immediate.length > 0 && isTerminalSuccess(started)) return immediate;
+  const statusUrl = stringValue(objectValue(started.urls)?.get) ||
+    (stringValue(started.id) ? `${baseUrl}/predictions/${encodeURIComponent(stringValue(started.id))}` : '');
+  if (!statusUrl && immediate.length > 0) return immediate;
+  if (!statusUrl) throw new Error('Replicate did not return a prediction URL.');
+  for (let i = 0; i < 90; i += 1) {
+    await delay(1000, signal);
+    const statusResponse = await fetch(statusUrl, { headers, signal });
+    const status = await readJsonResponse(statusResponse);
+    const state = stringValue(status.status).toLowerCase();
+    if (state === 'failed' || state === 'canceled') {
+      throw new Error(stringValue(status.error) || `Replicate prediction ${state}.`);
+    }
+    const images = imagesFromJson(status);
+    if (images.length > 0 && state === 'succeeded') return images;
+  }
+  throw new Error('Replicate job timed out before an image was ready.');
+}
+
+async function generateFalAi(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const apiKey = settings.providerKeys['fal-ai']?.trim();
+  if (!apiKey) throw new Error('fal.ai API key is missing.');
+  const baseUrl = imageProviderBaseUrl('fal-ai', settings);
+  const headers = {
+    Authorization: `Key ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+  const response = await fetch(`${baseUrl}/${model.replace(/^\/+/, '')}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      prompt,
+      image_size: 'square_hd',
+      num_images: 1,
+      output_format: 'png',
+      enable_safety_checker: true,
+    }),
+    signal,
+  });
+  const started = await readJsonResponse(response);
+  const immediate = imagesFromJson(started);
+  if (immediate.length > 0) return immediate;
+  const responseUrl = stringValue(started.response_url);
+  const statusUrl = stringValue(started.status_url);
+  const requestId = stringValue(started.request_id);
+  if (!responseUrl && !statusUrl && !requestId) {
+    throw new Error('fal.ai did not return a request id.');
+  }
+  for (let i = 0; i < 120; i += 1) {
+    await delay(1000, signal);
+    const url =
+      statusUrl ||
+      `${baseUrl}/${model.replace(/^\/+/, '')}/requests/${encodeURIComponent(requestId)}/status`;
+    const statusResponse = await fetch(url, { headers, signal });
+    const status = await readJsonResponse(statusResponse);
+    const state = stringValue(status.status).toUpperCase();
+    if (state === 'FAILED' || state === 'ERROR') {
+      throw new Error(stringValue(status.error) || 'fal.ai generation failed.');
+    }
+    const statusImages = imagesFromJson(status);
+    if (statusImages.length > 0) return statusImages;
+    if (state === 'COMPLETED' || state === 'SUCCEEDED') {
+      const finalUrl =
+        responseUrl ||
+        `${baseUrl}/${model.replace(/^\/+/, '')}/requests/${encodeURIComponent(requestId)}`;
+      const finalResponse = await fetch(finalUrl, { headers, signal });
+      const finalJson = await readJsonResponse(finalResponse);
+      const images = imagesFromJson(finalJson);
+      if (images.length > 0) return images;
+      break;
+    }
+  }
+  throw new Error('fal.ai job timed out before an image was ready.');
+}
+
+async function generateRunware(
+  prompt: string,
+  model: string,
+  settings: ImageGenerationSettings,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const response = await fetch(imageProviderBaseUrl('runware', settings), {
+    method: 'POST',
+    headers: requestHeaders('runware', settings),
+    body: JSON.stringify([
+      {
+        taskType: 'imageInference',
+        taskUUID: crypto.randomUUID(),
+        positivePrompt: prompt,
+        model,
+        width: 1024,
+        height: 1024,
+        numberResults: 1,
+        outputFormat: 'PNG',
+      },
+    ]),
     signal,
   });
   return imagesFromResponse(response);
@@ -579,15 +1374,17 @@ async function generateMiniMax(
 }
 
 async function generateVolcengineSeedream(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['volcengine-seedream']?.trim();
-  if (!apiKey) throw new Error('Volcengine Ark API key is missing.');
+  const provider = imageProviderById(providerId);
+  const apiKey = settings.providerKeys[providerId]?.trim();
+  if (!apiKey) throw new Error(`${provider.label} API key is missing.`);
   const response = await fetch(
-    `${imageProviderBaseUrl('volcengine-seedream', settings)}/images/generations`,
+    `${imageProviderBaseUrl(providerId, settings)}/images/generations`,
     {
       method: 'POST',
       headers: {
@@ -617,7 +1414,11 @@ async function generateDashScopeWanx(
   const apiKey = settings.providerKeys['dashscope-wanx']?.trim();
   if (!apiKey) throw new Error('DashScope API key is missing.');
   const baseUrl = imageProviderBaseUrl('dashscope-wanx', settings);
-  if (model.startsWith('wan2.6')) {
+  if (
+    model.startsWith('wan2.6') ||
+    model.startsWith('qwen-image-2.0') ||
+    model.startsWith('qwen-image-max')
+  ) {
     const response = await fetch(`${baseUrl}/services/aigc/multimodal-generation/generation`, {
       method: 'POST',
       headers: {
@@ -807,7 +1608,17 @@ function imagesFromJson(json: Record<string, unknown>): string[] {
   if (result && typeof result === 'object') {
     for (const src of imagesFromUnknown(result)) push(src);
   }
-  for (const key of ['data', 'images', 'artifacts']) {
+  for (const key of [
+    'data',
+    'images',
+    'artifacts',
+    'output',
+    'outputs',
+    'assets',
+    'predictions',
+    'generated_images',
+    'generatedImages',
+  ]) {
     for (const src of imagesFromUnknown(json[key])) push(src);
   }
   const output = objectValue(json.output);
@@ -832,14 +1643,30 @@ function imagesFromUnknown(value: unknown): string[] {
   };
   const direct = imageStringFromRecord(record);
   if (direct) push(direct);
+  const inlineData = objectValue(record.inlineData) ?? objectValue(record.inline_data);
+  if (inlineData) {
+    const data = stringValue(inlineData.data);
+    const mimeType = stringValue(inlineData.mimeType) || stringValue(inlineData.mime_type);
+    if (data) push(imageDataUrl(data, mimeType || 'image/png'));
+  }
   for (const key of [
     'image_urls',
+    'imageUrls',
     'image_base64',
+    'imageBase64',
     'image_b64',
+    'imageB64',
     'images',
+    'image',
     'results',
     'artifacts',
     'outputs',
+    'assets',
+    'predictions',
+    'generated_images',
+    'generatedImages',
+    'candidates',
+    'parts',
   ]) {
     for (const src of imagesFromUnknown(record[key])) push(src);
   }
@@ -853,15 +1680,35 @@ function imagesFromUnknown(value: unknown): string[] {
 }
 
 function imageStringFromRecord(record: Record<string, unknown>): string | null {
+  const bytesBase64 =
+    stringValue(record.bytesBase64Encoded) ||
+    stringValue(record.bytes_base64_encoded) ||
+    stringValue(record.imageBytes) ||
+    stringValue(record.image_bytes);
+  if (bytesBase64) {
+    const mimeType = stringValue(record.mimeType) || stringValue(record.mime_type);
+    return imageDataUrl(bytesBase64, mimeType || 'image/png');
+  }
   for (const key of [
     'url',
+    'uri',
     'image',
     'image_url',
+    'imageUrl',
+    'imageURL',
     'b64_json',
     'base64',
     'b64',
     'data_url',
+    'dataUrl',
+    'presignedUrl',
+    'signedUrl',
     'output_url',
+    'outputUrl',
+    'sample',
+    'assetUrl',
+    'inlineData',
+    'inline_data',
   ]) {
     const value = record[key];
     if (typeof value === 'string' && value.trim()) return toImageSrc(value);
@@ -874,9 +1721,16 @@ function imageStringFromRecord(record: Record<string, unknown>): string | null {
 }
 
 function toImageSrc(value: string): string {
-  const trimmed = value.trim();
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('data:')) return trimmed;
-  return `data:image/png;base64,${trimmed}`;
+  return imageDataUrl(value);
+}
+
+function isTerminalSuccess(value: Record<string, unknown>): boolean {
+  const state = (
+    stringValue(value.status) ||
+    stringValue(value.state) ||
+    stringValue(value.task_status)
+  ).toLowerCase();
+  return ['succeeded', 'success', 'completed', 'ready', 'done'].includes(state);
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {

@@ -71,6 +71,24 @@ import {
   type ImageGenerationSettings,
   type ImageProviderId,
 } from '@/lib/imageGeneration';
+import {
+  MUSIC_PROVIDERS,
+  loadMusicGenerationSettings,
+  musicProviderModel,
+  musicProviderReady,
+  saveMusicGenerationSettings,
+  type MusicGenerationSettings,
+  type MusicProviderId,
+} from '@/lib/musicGeneration';
+import {
+  THREE_D_PROVIDERS,
+  loadThreeDGenerationSettings,
+  saveThreeDGenerationSettings,
+  threeDProviderModel,
+  threeDProviderReady,
+  type ThreeDGenerationSettings,
+  type ThreeDProviderId,
+} from '@/lib/threeDGeneration';
 import type { SelectOption } from '@/store/types';
 import {
   localizeSelectOption,
@@ -84,6 +102,10 @@ import {
   slashText,
   type SlashSuggestion,
 } from '@/lib/slashCommands';
+import {
+  parseGameExpertCommand,
+  gameExpertMenuEntries,
+} from '@/lib/gameExperts';
 import {
   loadDockHeight,
   loadPaneWidth,
@@ -109,6 +131,11 @@ import {
   refreshFreeChannelModels,
   refreshProviderModels,
 } from '@/lib/modelLists';
+import {
+  estimateContextUsage,
+  formatCompactTokenCount,
+  type ContextUsageTone,
+} from '@/lib/contextUsage';
 import LazyMessageContent from '@/components/ai/LazyMessageContent';
 import { captureConversation } from '@/lib/sessionScreenshot';
 import { recordConversationGif } from '@/lib/sessionGif';
@@ -354,6 +381,19 @@ function cleanMessageText(text: string): string {
 
 function renderMessageText(text: string): string {
   return stripRouteLine(text);
+}
+
+function contextUsageFillColor(tone: ContextUsageTone): string {
+  if (tone === 'danger') return 'var(--status-error)';
+  if (tone === 'warn') return 'var(--status-running)';
+  return 'var(--status-success)';
+}
+
+function contextUsagePieBackground(percent: number, tone: ContextUsageTone): string {
+  const degrees = Math.min(360, Math.max(0, percent * 3.6));
+  const fill = contextUsageFillColor(tone);
+  const track = 'color-mix(in oklab, var(--panel-2) 78%, var(--border))';
+  return `conic-gradient(from -90deg, ${fill} 0deg ${degrees}deg, ${track} ${degrees}deg 360deg)`;
 }
 
 function assistantHeaderLabel(message: Message): string {
@@ -1029,6 +1069,8 @@ export default function AIDock({
   const messages = useStore((s) => s.messages);
   const sendPrompt = useStore((s) => s.sendPrompt);
   const generateImagePrompt = useStore((s) => s.generateImagePrompt);
+  const generateMusicPrompt = useStore((s) => s.generateMusicPrompt);
+  const generateThreeDPrompt = useStore((s) => s.generateThreeDPrompt);
   const runUltracodePrompt = useStore((s) => s.runUltracodePrompt);
   const appendChatNote = useStore((s) => s.appendChatNote);
   const stopChat = useStore((s) => s.stopChat);
@@ -1047,9 +1089,11 @@ export default function AIDock({
   const draft = useStore((s) => s.composerDraft);
   const composerFocusVersion = useStore((s) => s.composerFocusVersion);
   const locale = useStore((s) => s.locale);
+  const gameExpertSettings = useStore((s) => s.gameExpertSettings);
   const setComposer = useStore((s) => s.setComposer);
   const setComposerDraft = useStore((s) => s.setComposerDraft);
   const setWorkspace = useStore((s) => s.setWorkspace);
+  const removeWorkspace = useStore((s) => s.removeWorkspace);
   const permissionOptions = useStore((s) => s.permissionOptions);
   const composerModelOptions = useStore((s) => s.modelOptions);
   const workspaceHistory = useStore((s) => s.workspaceHistory);
@@ -1208,9 +1252,31 @@ export default function AIDock({
     () => buildSlashSuggestions(slashCatalogEntries, locale),
     [locale, slashCatalogEntries],
   );
+  // Game-expert hierarchy entries (root → group → expert), surfaced in the `/`
+  // menu only when experts are enabled. They route through the same explicit
+  // parser; insertText carries the localized path so it round-trips.
+  const gameExpertSuggestions = useMemo<SlashSuggestion[]>(
+    () =>
+      gameExpertMenuEntries(gameExpertSettings, locale).map((entry) => ({
+        id: entry.id,
+        kind: 'command' as const,
+        name: entry.name,
+        label: entry.name.slice(1),
+        detail: entry.detail,
+        insertText: entry.insertText,
+        source: 'app',
+        sourceAdapter: 'app' as const,
+        searchText:
+          `${entry.name} ${entry.detail} ${entry.insertText}`.toLowerCase(),
+      })),
+    [gameExpertSettings, locale],
+  );
   const activeAdapterSlashSuggestions = useMemo(
-    () => scopeSlashSuggestionsForAdapter(slashSuggestions, selectedAdapter),
-    [selectedAdapter, slashSuggestions],
+    () => [
+      ...scopeSlashSuggestionsForAdapter(slashSuggestions, selectedAdapter),
+      ...gameExpertSuggestions,
+    ],
+    [gameExpertSuggestions, selectedAdapter, slashSuggestions],
   );
   const filteredSlashSuggestions = useMemo(
     () =>
@@ -1429,6 +1495,138 @@ export default function AIDock({
     },
     [],
   );
+  const [musicSettings, setMusicSettings] = useState<MusicGenerationSettings>(
+    () => loadMusicGenerationSettings(),
+  );
+  useEffect(() => {
+    const refresh = () => setMusicSettings(loadMusicGenerationSettings());
+    window.addEventListener('fuc:music-generation-settings-changed', refresh);
+    return () =>
+      window.removeEventListener(
+        'fuc:music-generation-settings-changed',
+        refresh,
+      );
+  }, []);
+  const musicChannelOptions = useMemo<SelectOption[]>(
+    () =>
+      MUSIC_PROVIDERS.map((provider) => ({
+        id: provider.id,
+        label:
+          provider.label +
+          (musicProviderReady(provider.id, musicSettings) ? '' : ' ⚠'),
+        hint: t(
+          locale,
+          provider.category === 'commercial'
+            ? 'settings.musicGeneration.categoryCommercial'
+            : 'settings.musicGeneration.categoryFree',
+        ),
+        group: t(
+          locale,
+          provider.category === 'commercial'
+            ? 'settings.musicGeneration.commercialProviders'
+            : 'settings.musicGeneration.freeProviders',
+        ),
+      })),
+    [musicSettings, locale],
+  );
+  const musicChannelValue = musicSettings.preferredProviderId;
+  const musicModelOptions = useMemo<SelectOption[]>(() => {
+    const provider = MUSIC_PROVIDERS.find(
+      (item) => item.id === musicSettings.preferredProviderId,
+    );
+    if (!provider) return [];
+    const current = musicProviderModel(provider.id, musicSettings);
+    return uniqueModelSelectOptions([current, ...provider.models]);
+  }, [musicSettings]);
+  const musicModelValue = musicProviderModel(
+    musicSettings.preferredProviderId,
+    musicSettings,
+  );
+  const onMusicChannelChange = useCallback((id: string) => {
+    saveMusicGenerationSettings({
+      ...loadMusicGenerationSettings(),
+      preferredProviderId: id as MusicProviderId,
+    });
+  }, []);
+  const onMusicModelChange = useCallback(
+    (model: string) => {
+      const selected = model.trim();
+      if (!selected) return;
+      const current = loadMusicGenerationSettings();
+      const providerId = current.preferredProviderId;
+      saveMusicGenerationSettings({
+        ...current,
+        providerModels: { ...current.providerModels, [providerId]: selected },
+      });
+    },
+    [],
+  );
+  const [threeDSettings, setThreeDSettings] = useState<ThreeDGenerationSettings>(
+    () => loadThreeDGenerationSettings(),
+  );
+  useEffect(() => {
+    const refresh = () => setThreeDSettings(loadThreeDGenerationSettings());
+    window.addEventListener('fuc:three-d-generation-settings-changed', refresh);
+    return () =>
+      window.removeEventListener(
+        'fuc:three-d-generation-settings-changed',
+        refresh,
+      );
+  }, []);
+  const threeDChannelOptions = useMemo<SelectOption[]>(
+    () =>
+      THREE_D_PROVIDERS.map((provider) => ({
+        id: provider.id,
+        label:
+          provider.label +
+          (threeDProviderReady(provider.id, threeDSettings) ? '' : ' ⚠'),
+        hint: t(
+          locale,
+          provider.category === 'commercial'
+            ? 'settings.threeDGeneration.categoryCommercial'
+            : 'settings.threeDGeneration.categoryFree',
+        ),
+        group: t(
+          locale,
+          provider.category === 'commercial'
+            ? 'settings.threeDGeneration.commercialProviders'
+            : 'settings.threeDGeneration.freeProviders',
+        ),
+      })),
+    [threeDSettings, locale],
+  );
+  const threeDChannelValue = threeDSettings.preferredProviderId;
+  const threeDModelOptions = useMemo<SelectOption[]>(() => {
+    const provider = THREE_D_PROVIDERS.find(
+      (item) => item.id === threeDSettings.preferredProviderId,
+    );
+    if (!provider) return [];
+    const current = threeDProviderModel(provider.id, threeDSettings);
+    return uniqueModelSelectOptions([current, ...provider.models]);
+  }, [threeDSettings]);
+  const threeDModelValue = threeDProviderModel(
+    threeDSettings.preferredProviderId,
+    threeDSettings,
+  );
+  const onThreeDChannelChange = useCallback((id: string) => {
+    saveThreeDGenerationSettings({
+      ...loadThreeDGenerationSettings(),
+      preferredProviderId: id as ThreeDProviderId,
+    });
+  }, []);
+  const onThreeDModelChange = useCallback(
+    (model: string) => {
+      const selected = model.trim();
+      if (!selected) return;
+      const current = loadThreeDGenerationSettings();
+      const providerId = current.preferredProviderId;
+      saveThreeDGenerationSettings({
+        ...current,
+        providerModels: { ...current.providerModels, [providerId]: selected },
+      });
+    },
+    [],
+  );
   const channelSelectOptions = useMemo<SelectOption[]>(
     () => {
       const defaultOptions = RUNTIME_ADAPTERS.flatMap((adapter) => {
@@ -1607,6 +1805,26 @@ export default function AIDock({
             runSelection.modelClass ||
             'default')
       : runSelection.modelClass || 'default';
+  const contextUsage = useMemo(
+    () =>
+      estimateContextUsage({
+        messages,
+        draft,
+        adapter: selectedAdapter,
+        model: modelSelectValue,
+        simpleChatMode,
+      }),
+    [messages, draft, selectedAdapter, modelSelectValue, simpleChatMode],
+  );
+  const contextUsageTitle = useMemo(
+    () =>
+      t(locale, 'dock.contextUsageTitle')
+        .replace('{used}', formatCompactTokenCount(contextUsage.usedTokens))
+        .replace('{limit}', formatCompactTokenCount(contextUsage.limitTokens)),
+    [contextUsage.limitTokens, contextUsage.usedTokens, locale],
+  );
+  const showContextUsage =
+    !composer.imageMode && !composer.musicMode && !composer.threeDMode;
   const [keyModalChannel, setKeyModalChannel] = useState<FreeChannel | null>(null);
   const [keyModalValue, setKeyModalValue] = useState('');
   const [localSetupChannel, setLocalSetupChannel] =
@@ -2699,7 +2917,17 @@ export default function AIDock({
     const imageModeStart = /^\/image-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
     if (imageModeStart) {
       const wasImageMode = composer.imageMode;
-      setComposer({ imageMode: true });
+      const startedAt = wasImageMode
+        ? composer.imageModeStartedAt ?? Date.now()
+        : Date.now();
+      setComposer({
+        imageMode: true,
+        imageModeStartedAt: startedAt,
+        musicMode: false,
+        musicModeStartedAt: null,
+        threeDMode: false,
+        threeDModeStartedAt: null,
+      });
       clearDraftIfNeeded();
       if (!wasImageMode) {
         appendChatNote(t(locale, 'dock.imageModeEntered'), 'system');
@@ -2711,11 +2939,91 @@ export default function AIDock({
     const imageModeEnd = /^\/image-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
     if (imageModeEnd) {
       const wasImageMode = composer.imageMode;
-      setComposer({ imageMode: false });
+      setComposer({ imageMode: false, imageModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasImageMode) {
         appendChatNote(t(locale, 'dock.imageModeExited'), 'system');
       }
+      return;
+    }
+    const musicModeStart = /^\/music-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    if (musicModeStart) {
+      const wasMusicMode = composer.musicMode;
+      const startedAt = wasMusicMode
+        ? composer.musicModeStartedAt ?? Date.now()
+        : Date.now();
+      setComposer({
+        imageMode: false,
+        imageModeStartedAt: null,
+        musicMode: true,
+        musicModeStartedAt: startedAt,
+        threeDMode: false,
+        threeDModeStartedAt: null,
+      });
+      clearDraftIfNeeded();
+      if (!wasMusicMode) {
+        appendChatNote(t(locale, 'dock.musicModeEntered'), 'system');
+      }
+      const prompt = (musicModeStart[1] ?? '').trim();
+      if (prompt) generateMusicPrompt(prompt);
+      return;
+    }
+    const musicModeEnd = /^\/music-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
+    if (musicModeEnd) {
+      const wasMusicMode = composer.musicMode;
+      setComposer({ musicMode: false, musicModeStartedAt: null });
+      clearDraftIfNeeded();
+      if (wasMusicMode) {
+        appendChatNote(t(locale, 'dock.musicModeExited'), 'system');
+      }
+      return;
+    }
+    const musicMatch = /^\/(?:music|song|audio|compose|作曲|音乐|生成音乐)(?:\s+([\s\S]*))?$/iu.exec(text);
+    if (musicMatch) {
+      const prompt = (musicMatch[1] ?? '').trim();
+      if (!prompt) return;
+      generateMusicPrompt(text);
+      clearDraftIfNeeded();
+      return;
+    }
+    const threeDModeStart = /^\/mesh-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    if (threeDModeStart) {
+      const wasThreeDMode = composer.threeDMode;
+      const startedAt = wasThreeDMode
+        ? composer.threeDModeStartedAt ?? Date.now()
+        : Date.now();
+      setComposer({
+        imageMode: false,
+        imageModeStartedAt: null,
+        musicMode: false,
+        musicModeStartedAt: null,
+        threeDMode: true,
+        threeDModeStartedAt: startedAt,
+      });
+      clearDraftIfNeeded();
+      if (!wasThreeDMode) {
+        appendChatNote(t(locale, 'dock.threeDModeEntered'), 'system');
+      }
+      const prompt = (threeDModeStart[1] ?? '').trim();
+      if (prompt) generateThreeDPrompt(prompt);
+      return;
+    }
+    const threeDModeEnd = /^\/mesh-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
+    if (threeDModeEnd) {
+      const wasThreeDMode = composer.threeDMode;
+      setComposer({ threeDMode: false, threeDModeStartedAt: null });
+      clearDraftIfNeeded();
+      if (wasThreeDMode) {
+        appendChatNote(t(locale, 'dock.threeDModeExited'), 'system');
+      }
+      return;
+    }
+    const threeDMatch = /^\/(?:3d|3d-model|model3d|three-d|三维|3d模型|生成3d)(?:\s+([\s\S]*))?$/iu.exec(text);
+    if (threeDMatch) {
+      const prompt = (threeDMatch[1] ?? '').trim();
+      if (!prompt) return;
+      generateThreeDPrompt(text);
+      clearDraftIfNeeded();
       return;
     }
     const deepResearchMatch = /^\/deep-research(?:\s+([\s\S]*))?$/i.exec(text);
@@ -2753,6 +3061,36 @@ export default function AIDock({
     if (composer.imageMode && !text.startsWith('/')) {
       generateImagePrompt(text);
       clearDraftIfNeeded();
+      return;
+    }
+    if (composer.musicMode && !text.startsWith('/')) {
+      generateMusicPrompt(text);
+      clearDraftIfNeeded();
+      return;
+    }
+    if (composer.threeDMode && !text.startsWith('/')) {
+      generateThreeDPrompt(text);
+      clearDraftIfNeeded();
+      return;
+    }
+    // Explicit game-expert / producer invocation. Supports both whole-team
+    // routing via a root alias (`/game`, `/游戏专家`, multilingual) and
+    // hierarchical drill-down by `/`-separated levels — `/游戏专家/编程/引擎程序`
+    // (root → group → expert) or a direct leaf `/引擎程序`. Resolution is
+    // locale-agnostic, so any UI language can name the group/expert. The
+    // experts never auto-fire from chat text, so this command is the opt-in.
+    const gameCommand = parseGameExpertCommand(text, gameExpertSettings);
+    if (gameCommand) {
+      const { task, expertIds } = gameCommand;
+      if (!task || activeChatting) return;
+      void (async () => {
+        if (!(await ensureSelectedLocalChannelReady())) return;
+        sendPrompt(task, {
+          forceGameExperts: true,
+          ...(expertIds.length > 0 ? { gameExpertIds: expertIds } : {}),
+        });
+        clearDraftIfNeeded();
+      })();
       return;
     }
     const promptText = expandSlashRequest(text, activeAdapterSlashSuggestions);
@@ -2847,6 +3185,79 @@ export default function AIDock({
       </button>
     </div>
   );
+  const generationMode: 'image' | 'music' | 'threeD' | null = composer.imageMode
+    ? 'image'
+    : composer.musicMode
+      ? 'music'
+      : composer.threeDMode
+        ? 'threeD'
+        : null;
+  const channelOptions =
+    generationMode === 'image'
+      ? imageChannelOptions
+      : generationMode === 'music'
+        ? musicChannelOptions
+        : generationMode === 'threeD'
+          ? threeDChannelOptions
+          : channelSelectOptions;
+  const channelValue =
+    generationMode === 'image'
+      ? imageChannelValue
+      : generationMode === 'music'
+        ? musicChannelValue
+        : generationMode === 'threeD'
+          ? threeDChannelValue
+          : channelSelectValue;
+  const handleChannelChange =
+    generationMode === 'image'
+      ? onImageChannelChange
+      : generationMode === 'music'
+        ? onMusicChannelChange
+        : generationMode === 'threeD'
+          ? onThreeDChannelChange
+          : onChannelChange;
+  const modelOptionsForMode =
+    generationMode === 'image'
+      ? imageModelOptions
+      : generationMode === 'music'
+        ? musicModelOptions
+        : generationMode === 'threeD'
+          ? threeDModelOptions
+          : modelSelectOptions;
+  const modelValueForMode =
+    generationMode === 'image'
+      ? imageModelValue
+      : generationMode === 'music'
+        ? musicModelValue
+        : generationMode === 'threeD'
+          ? threeDModelValue
+          : modelSelectValue;
+  const handleModelChange =
+    generationMode === 'image'
+      ? onImageModelChange
+      : generationMode === 'music'
+        ? onMusicModelChange
+        : generationMode === 'threeD'
+          ? onThreeDModelChange
+          : onModelChange;
+  const modelTitleForMode =
+    generationMode === 'threeD'
+      ? t(locale, 'dock.threeDModelTitle')
+      : generationMode === 'music'
+      ? t(locale, 'dock.musicModelTitle')
+      : generationMode === 'image'
+        ? t(locale, 'dock.imageModelTitle')
+        : loadingChannelModels
+          ? t(locale, 'dock.modelVersionLoading')
+          : t(locale, 'dock.modelVersionTitle');
+  const composerModeClass =
+    composer.imageMode && !dropActive
+      ? 'fuc-ai-input--image '
+      : composer.musicMode && !dropActive
+        ? 'fuc-ai-input--music '
+        : composer.threeDMode && !dropActive
+          ? 'fuc-ai-input--three-d '
+          : '';
 
   return (
     <div
@@ -3310,7 +3721,7 @@ export default function AIDock({
               : isChat
                 ? 'fuc-ai-input--chat border-border '
                 : 'border-border ') +
-            (composer.imageMode && !dropActive ? 'fuc-ai-input--image ' : '') +
+            composerModeClass +
             (isReadOnly ? 'opacity-60 ' : '')
           }
         >
@@ -3397,7 +3808,11 @@ export default function AIDock({
                 ? t(locale, 'dock.runningPlaceholder')
                 : composer.imageMode
                   ? t(locale, 'dock.imageModePlaceholder')
-                  : t(locale, 'dock.placeholder')
+                  : composer.musicMode
+                    ? t(locale, 'dock.musicModePlaceholder')
+                    : composer.threeDMode
+                      ? t(locale, 'dock.threeDModePlaceholder')
+                      : t(locale, 'dock.placeholder')
             }
             aria-expanded={slashOpen}
             aria-controls={slashOpen ? 'fuc-slash-suggestions' : undefined}
@@ -3430,19 +3845,19 @@ export default function AIDock({
           <div
             className={
               'flex flex-wrap items-center gap-2 rounded-b-lg px-2 py-2 ' +
-              (composer.imageMode ? 'bg-transparent' : 'bg-bg')
+              (generationMode ? 'bg-transparent' : 'bg-bg')
             }
           >
             <Select
               title={t(locale, 'dock.channelTitle')}
-              options={composer.imageMode ? imageChannelOptions : channelSelectOptions}
-              value={composer.imageMode ? imageChannelValue : channelSelectValue}
-              onChange={composer.imageMode ? onImageChannelChange : onChannelChange}
+              options={channelOptions}
+              value={channelValue}
+              onChange={handleChannelChange}
               disabled={isReadOnly}
               className="min-w-0"
               icon="✦"
             />
-            {!composer.imageMode && !simpleChatMode && activeSessionIsWorkflow && (
+            {!generationMode && !simpleChatMode && activeSessionIsWorkflow && (
               <button
                 type="button"
                 title={t(locale, 'dock.modelStrategyTitle')}
@@ -3484,22 +3899,15 @@ export default function AIDock({
                 </ul>
               </div>
             )}
-            {(composer.imageMode ? imageModelOptions : modelSelectOptions)
-              .length > 0 && (
+            {modelOptionsForMode.length > 0 && (
               <Select
-                title={
-                  composer.imageMode
-                    ? t(locale, 'dock.modelVersionTitle')
-                    : loadingChannelModels
-                      ? t(locale, 'dock.modelVersionLoading')
-                      : t(locale, 'dock.modelVersionTitle')
-                }
-                options={composer.imageMode ? imageModelOptions : modelSelectOptions}
-                value={composer.imageMode ? imageModelValue : modelSelectValue}
-                onChange={composer.imageMode ? onImageModelChange : onModelChange}
+                title={modelTitleForMode}
+                options={modelOptionsForMode}
+                value={modelValueForMode}
+                onChange={handleModelChange}
                 disabled={isReadOnly}
                 className="min-w-0 max-w-[14rem]"
-                icon={!composer.imageMode && loadingChannelModels ? '↻' : '◇'}
+                icon={!generationMode && loadingChannelModels ? '↻' : '◇'}
               />
             )}
             <button
@@ -3531,11 +3939,27 @@ export default function AIDock({
               value={composer.workspace}
               history={workspaceHistory}
               onSelect={setWorkspace}
+              onRemove={removeWorkspace}
               disabled={activeAiEditing}
               className="min-w-0"
             />
 
-            <div className="ml-auto flex items-center">
+            <div className="ml-auto flex items-center gap-2">
+              {showContextUsage && (
+                <span
+                  title={contextUsageTitle}
+                  aria-label={contextUsageTitle}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-[9px] font-bold leading-none text-fg shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] [text-shadow:0_1px_2px_rgba(0,0,0,0.75)]"
+                  style={{
+                    background: contextUsagePieBackground(
+                      contextUsage.percent,
+                      contextUsage.tone,
+                    ),
+                  }}
+                >
+                  <span className="tabular-nums">{contextUsage.displayPercent}</span>
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => {

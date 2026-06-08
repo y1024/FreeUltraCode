@@ -474,6 +474,24 @@ pre,
   border-color: var(--accent-2);
 }
 
+.fuc-ai-input--music {
+  background: color-mix(in oklab, var(--accent-3) 8%, var(--bg));
+  border-color: color-mix(in oklab, var(--accent-3) 50%, var(--border));
+}
+
+.fuc-ai-input--music:focus-within {
+  border-color: var(--accent-3);
+}
+
+.fuc-ai-input--three-d {
+  background: color-mix(in oklab, var(--accent) 7%, var(--bg));
+  border-color: color-mix(in oklab, var(--accent) 48%, var(--border));
+}
+
+.fuc-ai-input--three-d:focus-within {
+  border-color: var(--accent);
+}
+
 .fuc-ai-input:focus {
   border-color: var(--accent);
 }
@@ -1097,6 +1115,56 @@ html.fuc-stream-scheme-solarized-dark {
   border-radius: 8px;
   background: var(--stream-surface-bg);
   object-fit: contain;
+}
+.ai-audio-player audio {
+  display: none;
+}
+.ai-audio-player__range {
+  accent-color: var(--accent);
+}
+.ai-model-viewer {
+  display: block;
+  color: var(--stream-fg);
+}
+.ai-model-viewer__body {
+  position: relative;
+  display: block;
+  min-height: 18rem;
+  background:
+    linear-gradient(color-mix(in oklab, var(--stream-surface-border) 32%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--stream-surface-border) 32%, transparent) 1px, transparent 1px),
+    linear-gradient(180deg, color-mix(in oklab, var(--bg) 88%, #0f172a 12%), var(--stream-surface-bg));
+  background-size: 24px 24px, 24px 24px, 100% 100%;
+}
+.ai-model-viewer__viewport {
+  display: block;
+  width: 100%;
+  height: min(48vh, 26rem);
+  min-height: 18rem;
+  touch-action: none;
+  cursor: grab;
+}
+.ai-model-viewer__viewport:active {
+  cursor: grabbing;
+}
+.ai-model-viewer__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+.ai-model-viewer__status {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: min(90%, 28rem);
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--stream-surface-border);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--stream-surface-bg) 88%, transparent);
+  padding: 0.45rem 0.65rem;
+  text-align: center;
+  backdrop-filter: blur(8px);
 }
 .ai-file-chip--interactive {
   color: var(--file-preview-link);

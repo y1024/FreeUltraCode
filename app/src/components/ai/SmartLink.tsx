@@ -3,6 +3,9 @@ import { ExternalLink } from 'lucide-react';
 import { openExternal } from '@/lib/tauri';
 import { parseFileRef } from './lib/filePath';
 import FileChip, { type OpenFileFn } from './FileChip';
+import AudioPlayer from './AudioPlayer';
+import ModelViewer from './ModelViewer';
+import { canPreviewModelUrl, isModelUrl } from './lib/modelLink';
 
 /**
  * Anchor renderer for markdown links. External URLs (http/https/mailto) open in
@@ -15,20 +18,51 @@ export default function SmartLink({
   children,
   onOpenFile,
   cwd,
+  defaultModelAnimations,
 }: {
   href?: string;
   children?: ReactNode;
   onOpenFile?: OpenFileFn;
   cwd?: string;
+  defaultModelAnimations?: string[];
 }) {
   const url = href ?? '';
+  const labelText = childrenToText(children);
+  const isAudioUrl =
+    /^data:audio\//i.test(url) ||
+    /^https?:\/\/.+\.(?:mp3|wav|m4a|aac|ogg|flac|webm)(?:[?#].*)?$/i.test(url);
   const isWebUrl = /^https?:/i.test(url);
+  const hasExplicitNonModelMediaExt =
+    /\.(?:png|apng|jpe?g|jpe|jfif|pjpeg|pjp|gif|webp|bmp|svg|avif|ico|mp4|mov|webm|mp3|wav|m4a|aac|ogg|flac)(?:[?#].*)?$/i.test(
+      url,
+    );
+  const isModelAssetUrl =
+    isModelUrl(url) ||
+    (isWebUrl &&
+      !hasExplicitNonModelMediaExt &&
+      /(?:3d\s*模型|3d model|mesh|glb|gltf|obj|fbx|stl|ply)/i.test(labelText));
   const isExternal = /^(https?:|mailto:)/i.test(url);
   const ref = parseFileRef(url, { allowSpaces: true });
+
+  if (isModelAssetUrl && canPreviewModelUrl(url)) {
+    return (
+      <ModelViewer
+        src={ref?.path ?? url}
+        label={labelText}
+        cwd={cwd}
+        defaultAnimations={defaultModelAnimations}
+      />
+    );
+  }
+
   if (ref) return <FileChip refData={ref} onOpenFile={onOpenFile} cwd={cwd} />;
 
+  if (isAudioUrl) {
+    return <AudioPlayer src={url} label={labelText} />;
+  }
+
   if (!isExternal) {
-    const childRef = parseFileRef(childrenToText(children), { allowSpaces: true });
+    const childRef = parseFileRef(labelText, { allowSpaces: true });
     if (childRef) {
       return <FileChip refData={childRef} onOpenFile={onOpenFile} cwd={cwd} />;
     }

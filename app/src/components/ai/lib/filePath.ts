@@ -113,6 +113,8 @@ const KNOWN_EXT = new Set([
   // browser-previewable images
   'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'pjpeg', 'pjp', 'gif', 'webp',
   'bmp', 'dib', 'ico', 'cur', 'svg', 'avif',
+  // 3D model assets
+  'glb', 'gltf', 'obj', 'stl', 'fbx', 'ply', 'usdz', 'blend',
 ]);
 
 const KNOWN_BASENAME = new Set([

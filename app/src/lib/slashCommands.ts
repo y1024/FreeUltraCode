@@ -38,6 +38,18 @@ export interface SlashSuggestion {
 
 export const SLASH_COMMANDS = [
   {
+    name: '/game',
+    label: { 'zh-CN': '游戏专家', 'en-US': 'Game Experts' },
+    detail: {
+      'zh-CN': '显式调用游戏开发专家团队；完整/多阶段需求由制作人总控编排，其余融合相关专家视角作答',
+      'en-US': 'Explicitly call the game-dev expert team; full/multi-stage requests run under producer orchestration, others blend the relevant expert views',
+    },
+    text: {
+      'zh-CN': '/game ',
+      'en-US': '/game ',
+    },
+  },
+  {
     name: '/ultracode',
     label: { 'zh-CN': 'Ultracode 动态编排', 'en-US': 'Ultracode' },
     detail: {
@@ -67,6 +79,78 @@ export const SLASH_COMMANDS = [
     detail: {
       'zh-CN': '退出生图模式，回到 AI 编程',
       'en-US': 'Leave image mode and return to AI coding',
+    },
+    text: {
+      'zh-CN': '',
+      'en-US': '',
+    },
+  },
+  {
+    name: '/music',
+    label: { 'zh-CN': '生成音乐', 'en-US': 'Generate Music' },
+    detail: {
+      'zh-CN': '调用设置 > 音乐渠道中的商用或免费渠道生成音乐/BGM',
+      'en-US': 'Generate music or BGM with the commercial or free channel configured in Settings > Music',
+    },
+    text: {
+      'zh-CN': '/music ',
+      'en-US': '/music ',
+    },
+  },
+  {
+    name: '/music-mode-start',
+    label: { 'zh-CN': '开始音乐模式', 'en-US': 'Start Music Mode' },
+    detail: {
+      'zh-CN': '进入音乐模式：之后每条消息都先让编程模型撰写音乐提示词，再调用默认音乐渠道',
+      'en-US': 'Enter music mode: every message has the coding model write a music prompt, then calls the default music channel',
+    },
+    text: {
+      'zh-CN': '',
+      'en-US': '',
+    },
+  },
+  {
+    name: '/music-mode-end',
+    label: { 'zh-CN': '结束音乐模式', 'en-US': 'End Music Mode' },
+    detail: {
+      'zh-CN': '退出音乐模式，回到 AI 编程',
+      'en-US': 'Leave music mode and return to AI coding',
+    },
+    text: {
+      'zh-CN': '',
+      'en-US': '',
+    },
+  },
+  {
+    name: '/3d',
+    label: { 'zh-CN': '生成 3D 模型', 'en-US': 'Generate 3D Model' },
+    detail: {
+      'zh-CN': '调用设置 > 3D 渠道中的商用、免费或本地渠道生成 3D 模型',
+      'en-US': 'Generate a 3D model with the commercial, free, or local channel configured in Settings > 3D',
+    },
+    text: {
+      'zh-CN': '/3d ',
+      'en-US': '/3d ',
+    },
+  },
+  {
+    name: '/mesh-mode-start',
+    label: { 'zh-CN': '开始 Mesh 模式', 'en-US': 'Start Mesh Mode' },
+    detail: {
+      'zh-CN': '进入 Mesh 模式：之后每条消息都先让编程模型撰写 3D 提示词，再调用默认 3D 渠道',
+      'en-US': 'Enter mesh mode: every message has the coding model write a 3D prompt, then calls the default 3D channel',
+    },
+    text: {
+      'zh-CN': '',
+      'en-US': '',
+    },
+  },
+  {
+    name: '/mesh-mode-end',
+    label: { 'zh-CN': '结束 Mesh 模式', 'en-US': 'End Mesh Mode' },
+    detail: {
+      'zh-CN': '退出 Mesh 模式，回到 AI 编程',
+      'en-US': 'Leave mesh mode and return to AI coding',
     },
     text: {
       'zh-CN': '',
@@ -207,8 +291,15 @@ export const STATIC_SLASH_ENTRIES: StaticSlashEntry[] = SLASH_COMMANDS.map(
 // features that ship with and are unique to this app. Keep this list in sync
 // when adding a new first-class app command.
 export const PROJECT_COMMAND_NAMES = [
+  '/game',
   '/ultracode',
   '/deep-research',
+  '/music',
+  '/music-mode-start',
+  '/music-mode-end',
+  '/3d',
+  '/mesh-mode-start',
+  '/mesh-mode-end',
   '/image-mode-start',
   '/image-mode-end',
   '/screenshot',

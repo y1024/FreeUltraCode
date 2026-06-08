@@ -236,6 +236,40 @@ describe('AIDock slash suggestions', () => {
     }
   });
 
+  it('shows estimated context usage in the input toolbar', async () => {
+    resetStore();
+    useStore.setState({
+      messages: [
+        {
+          id: 'm_user_context',
+          role: 'user',
+          text: '帮我检查这个登录流程',
+          createdAt: 1,
+        },
+        {
+          id: 'm_assistant_context',
+          role: 'assistant',
+          text: '⚙ 模型：sonnet\n可以，先看鉴权入口。',
+          createdAt: 2,
+        },
+      ],
+      composerDraft: '继续分析',
+    });
+    const view = await renderDock();
+
+    try {
+      const badge = view.container.querySelector<HTMLElement>(
+        '[aria-label^="估算"]',
+      );
+      expect(badge).toBeInstanceOf(HTMLElement);
+      expect(badge?.textContent).toMatch(/^<?\d+%$/);
+      expect(badge?.className).toContain('rounded-full');
+      expect(badge?.getAttribute('style')).toContain('conic-gradient');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it('toggles sticky image mode via /image-mode-start and /image-mode-end', async () => {
     resetStore();
     const generateImagePrompt = vi.fn();
@@ -261,6 +295,7 @@ describe('AIDock slash suggestions', () => {
         submitEnter(input);
       });
       expect(useStore.getState().composer.imageMode).toBe(true);
+      expect(useStore.getState().composer.imageModeStartedAt).toBeGreaterThan(0);
       expect(generateImagePrompt).not.toHaveBeenCalled();
       expect(sendPrompt).not.toHaveBeenCalled();
       // A system note announcing image mode lands in the message stream.
@@ -293,6 +328,7 @@ describe('AIDock slash suggestions', () => {
         submitEnter(input);
       });
       expect(useStore.getState().composer.imageMode).toBe(false);
+      expect(useStore.getState().composer.imageModeStartedAt).toBeNull();
       // Exiting image mode is announced in the stream too.
       expect(
         useStore
@@ -337,7 +373,222 @@ describe('AIDock slash suggestions', () => {
       });
 
       expect(useStore.getState().composer.imageMode).toBe(true);
+      expect(useStore.getState().composer.imageModeStartedAt).toBeGreaterThan(0);
       expect(generateImagePrompt).toHaveBeenCalledWith('一张赛博朋克海报');
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(input.value).toBe('');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('toggles sticky music mode via /music-mode-start and /music-mode-end', async () => {
+    resetStore();
+    const generateMusicPrompt = vi.fn();
+    const sendPrompt = vi.fn();
+    useStore.setState({ generateMusicPrompt, sendPrompt });
+    const view = await renderDock();
+
+    const submitEnter = (input: HTMLTextAreaElement) =>
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, '/music-mode-start');
+        submitEnter(input);
+      });
+      expect(useStore.getState().composer.musicMode).toBe(true);
+      expect(useStore.getState().composer.musicModeStartedAt).toBeGreaterThan(0);
+      expect(useStore.getState().composer.imageMode).toBe(false);
+      expect(generateMusicPrompt).not.toHaveBeenCalled();
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(
+        useStore
+          .getState()
+          .messages.some(
+            (m) => m.role === 'system' && m.text.includes('已进入音乐模式'),
+          ),
+      ).toBe(true);
+
+      await act(async () => {
+        typeTextarea(input, '一段冷静的产品演示 BGM');
+        submitEnter(input);
+      });
+      expect(generateMusicPrompt).toHaveBeenCalledWith('一段冷静的产品演示 BGM');
+      expect(sendPrompt).not.toHaveBeenCalled();
+
+      await act(async () => {
+        typeTextarea(input, '/review 看看这段代码');
+        submitEnter(input);
+      });
+      expect(sendPrompt).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        typeTextarea(input, '/music-mode-end');
+        submitEnter(input);
+      });
+      expect(useStore.getState().composer.musicMode).toBe(false);
+      expect(useStore.getState().composer.musicModeStartedAt).toBeNull();
+      expect(
+        useStore
+          .getState()
+          .messages.some(
+            (m) => m.role === 'system' && m.text.includes('已退出音乐模式'),
+          ),
+      ).toBe(true);
+
+      await act(async () => {
+        typeTextarea(input, '加一个登录节点');
+        submitEnter(input);
+      });
+      expect(sendPrompt).toHaveBeenCalledWith(expect.stringContaining('加一个登录节点'));
+      expect(generateMusicPrompt).toHaveBeenCalledTimes(1);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('enters music mode and generates when text follows /music-mode-start', async () => {
+    resetStore();
+    const generateMusicPrompt = vi.fn();
+    const sendPrompt = vi.fn();
+    useStore.setState({ generateMusicPrompt, sendPrompt });
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, '/music-mode-start 一段赛博朋克片头曲');
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            ctrlKey: true,
+            bubbles: true,
+          }),
+        );
+      });
+
+      expect(useStore.getState().composer.musicMode).toBe(true);
+      expect(useStore.getState().composer.musicModeStartedAt).toBeGreaterThan(0);
+      expect(useStore.getState().composer.imageMode).toBe(false);
+      expect(generateMusicPrompt).toHaveBeenCalledWith('一段赛博朋克片头曲');
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(input.value).toBe('');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('toggles sticky 3D mode via /mesh-mode-start and /mesh-mode-end', async () => {
+    resetStore();
+    const generateThreeDPrompt = vi.fn();
+    const sendPrompt = vi.fn();
+    useStore.setState({ generateThreeDPrompt, sendPrompt });
+    const view = await renderDock();
+
+    const submitEnter = (input: HTMLTextAreaElement) =>
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, '/mesh-mode-start');
+        submitEnter(input);
+      });
+      expect(useStore.getState().composer.threeDMode).toBe(true);
+      expect(useStore.getState().composer.threeDModeStartedAt).toBeGreaterThan(0);
+      expect(useStore.getState().composer.imageMode).toBe(false);
+      expect(useStore.getState().composer.musicMode).toBe(false);
+      expect(generateThreeDPrompt).not.toHaveBeenCalled();
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(
+        useStore
+          .getState()
+          .messages.some(
+            (m) => m.role === 'system' && m.text.includes('已进入 Mesh 模式'),
+          ),
+      ).toBe(true);
+
+      await act(async () => {
+        typeTextarea(input, '一个低多边形宝箱');
+        submitEnter(input);
+      });
+      expect(generateThreeDPrompt).toHaveBeenCalledWith('一个低多边形宝箱');
+      expect(sendPrompt).not.toHaveBeenCalled();
+
+      await act(async () => {
+        typeTextarea(input, '/review 看看这段代码');
+        submitEnter(input);
+      });
+      expect(sendPrompt).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        typeTextarea(input, '/mesh-mode-end');
+        submitEnter(input);
+      });
+      expect(useStore.getState().composer.threeDMode).toBe(false);
+      expect(useStore.getState().composer.threeDModeStartedAt).toBeNull();
+      expect(
+        useStore
+          .getState()
+          .messages.some(
+            (m) => m.role === 'system' && m.text.includes('已退出 Mesh 模式'),
+          ),
+      ).toBe(true);
+
+      await act(async () => {
+        typeTextarea(input, '加一个登录节点');
+        submitEnter(input);
+      });
+      expect(sendPrompt).toHaveBeenCalledWith(expect.stringContaining('加一个登录节点'));
+      expect(generateThreeDPrompt).toHaveBeenCalledTimes(1);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('enters 3D mode and generates when text follows /mesh-mode-start', async () => {
+    resetStore();
+    const generateThreeDPrompt = vi.fn();
+    const sendPrompt = vi.fn();
+    useStore.setState({ generateThreeDPrompt, sendPrompt });
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, '/mesh-mode-start 一个赛博朋克机械臂');
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            ctrlKey: true,
+            bubbles: true,
+          }),
+        );
+      });
+
+      expect(useStore.getState().composer.threeDMode).toBe(true);
+      expect(useStore.getState().composer.threeDModeStartedAt).toBeGreaterThan(0);
+      expect(useStore.getState().composer.imageMode).toBe(false);
+      expect(useStore.getState().composer.musicMode).toBe(false);
+      expect(generateThreeDPrompt).toHaveBeenCalledWith('一个赛博朋克机械臂');
       expect(sendPrompt).not.toHaveBeenCalled();
       expect(input.value).toBe('');
     } finally {
@@ -382,6 +633,82 @@ describe('AIDock slash suggestions', () => {
         window.localStorage.getItem('freeultracode.imageGeneration.v1') ?? '{}',
       );
       expect(saved.preferredProviderId).toBe('volcengine-seedream');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('switches the bottom channel/model selectors to music providers in music mode', async () => {
+    resetStore();
+    useStore.setState({ composer: { ...defaultComposer, musicMode: true } });
+    const view = await renderDock();
+
+    try {
+      const channelTrigger = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button[title]'),
+      ).find((btn) => btn.getAttribute('title') === '渠道');
+      expect(channelTrigger).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        channelTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      const menuText =
+        channelTrigger?.parentElement?.querySelector('[role="listbox"]')
+          ?.textContent ?? '';
+      expect(menuText).toContain('ElevenLabs Music');
+      expect(menuText).toContain('Hugging Face MusicGen');
+
+      const huggingFace = Array.from(
+        view.container.querySelectorAll<HTMLElement>('[role="option"]'),
+      ).find((opt) => opt.textContent?.includes('Hugging Face MusicGen'));
+      expect(huggingFace).toBeInstanceOf(HTMLElement);
+      await act(async () => {
+        huggingFace?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      const saved = JSON.parse(
+        window.localStorage.getItem('freeultracode.musicGeneration.v1') ?? '{}',
+      );
+      expect(saved.preferredProviderId).toBe('huggingface-musicgen');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('switches the bottom channel/model selectors to 3D providers in 3D mode', async () => {
+    resetStore();
+    useStore.setState({ composer: { ...defaultComposer, threeDMode: true } });
+    const view = await renderDock();
+
+    try {
+      const channelTrigger = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button[title]'),
+      ).find((btn) => btn.getAttribute('title') === '渠道');
+      expect(channelTrigger).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        channelTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      const menuText =
+        channelTrigger?.parentElement?.querySelector('[role="listbox"]')
+          ?.textContent ?? '';
+      expect(menuText).toContain('Meshy');
+      expect(menuText).toContain('Local Hunyuan3D');
+
+      const localHunyuan = Array.from(
+        view.container.querySelectorAll<HTMLElement>('[role="option"]'),
+      ).find((opt) => opt.textContent?.includes('Local Hunyuan3D'));
+      expect(localHunyuan).toBeInstanceOf(HTMLElement);
+      await act(async () => {
+        localHunyuan?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      const saved = JSON.parse(
+        window.localStorage.getItem('freeultracode.threeDGeneration.v1') ?? '{}',
+      );
+      expect(saved.preferredProviderId).toBe('local-hunyuan3d');
     } finally {
       await view.cleanup();
     }

@@ -32,11 +32,16 @@ function makeFakeCli(name: string, fixtureBody: string): string {
   return shim;
 }
 
-// Fake claude: dump argv to a file, read the full prompt from stdin, then emit
-// stream-json (tool_use breadcrumb, two assistant text chunks, terminal result).
-function fakeClaudeBody(argvOut: string): string {
+// Fake claude: answers `--help`, dumps argv to a file, reads the full prompt
+// from stdin, then emits stream-json (tool_use breadcrumb, two assistant text
+// chunks, terminal result).
+function fakeClaudeBody(argvOut: string, helpText = 'Options:\n  --bare\n'): string {
   return `
 const fs = require('node:fs');
+if (process.argv.slice(2).includes('--help')) {
+  process.stdout.write(${JSON.stringify(helpText)});
+  process.exit(0);
+}
 fs.writeFileSync(${JSON.stringify(argvOut)}, JSON.stringify(process.argv.slice(2)));
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -113,7 +118,8 @@ describe('spawnCliAgent (claude stream-json)', () => {
     expect(argv).toContain('--output-format');
     expect(argv).toContain('stream-json');
     expect(argv).toContain('--verbose');
-    expect(argv).toContain('--strict-mcp-config');
+    // MCP is on by default now: no --strict-mcp-config unless explicitly disabled.
+    expect(argv).not.toContain('--strict-mcp-config');
     expect(argv).toContain('--dangerously-skip-permissions');
     expect(argv).toContain('--add-dir');
     // sonnet is a valid claude tier → forwarded.
@@ -161,6 +167,26 @@ describe('spawnCliAgent (claude stream-json)', () => {
     });
     const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
     expect(argv).toContain('--bare');
+  });
+
+  it('skips bare mode when the installed claude CLI does not support it', async () => {
+    const argvOut = join(dir, 'argv-claude-no-bare.json');
+    const bin = makeFakeCli(
+      'fake-claude-no-bare',
+      fakeClaudeBody(argvOut, 'Options:\n  --print\n'),
+    );
+    await spawnCliAgent('p', {
+      adapter: 'claude-code',
+      cliCommand: bin,
+      permission: 'full',
+      env: {
+        ANTHROPIC_API_KEY: 'freecc',
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:8766/ch/open_router',
+        ANTHROPIC_MODEL: 'z-ai/glm-4.6',
+      },
+    });
+    const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
+    expect(argv).not.toContain('--bare');
   });
 
   it('normalizes known provider model env before spawning claude', async () => {

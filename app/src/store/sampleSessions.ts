@@ -898,4 +898,9 @@ export const defaultComposer: ComposerSettings = {
   workspace: '',
   modelStrategy: 'inherit',
   imageMode: false,
+  imageModeStartedAt: null,
+  musicMode: false,
+  musicModeStartedAt: null,
+  threeDMode: false,
+  threeDModeStartedAt: null,
 };

@@ -1,7 +1,7 @@
 {
   "name": "freeultracode-app",
   "private": true,
-  "version": "0.2.8",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -41,6 +41,7 @@
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "three": "^0.184.0",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
@@ -52,6 +53,7 @@
     "@types/node": "^20.16.11",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.184.1",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "@vitejs/plugin-react": "^6.0.2",

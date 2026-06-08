@@ -166,6 +166,22 @@ export interface ComposerSettings {
    * AI 编程;由 /image-mode-start 开启、/image-mode-end 关闭。
    */
   imageMode: boolean;
+  /** Epoch ms when sticky image mode started; used to merge mode-local prompts. */
+  imageModeStartedAt?: number | null;
+  /**
+   * 粘性音乐模式。true 时输入框里的裸文本(无 slash 命令)走音乐生成而非
+   * AI 编程;由 /music-mode-start 开启、/music-mode-end 关闭。
+   */
+  musicMode: boolean;
+  /** Epoch ms when sticky music mode started; used to merge mode-local prompts. */
+  musicModeStartedAt?: number | null;
+  /**
+   * 粘性 3D 生成模式。true 时输入框里的裸文本(无 slash 命令)走 3D 模型生成而非
+   * AI 编程;由 /mesh-mode-start 开启、/mesh-mode-end 关闭。
+   */
+  threeDMode: boolean;
+  /** Epoch ms when sticky mesh mode started; used to merge mode-local prompts. */
+  threeDModeStartedAt?: number | null;
 }
 
 export interface SessionComposerSettings {

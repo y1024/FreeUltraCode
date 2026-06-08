@@ -129,6 +129,12 @@ export interface LocalFilePreview {
   base64?: string | null;
 }
 
+export interface ModelAssetDownload {
+  path: string;
+  mime: string;
+  sizeBytes: number;
+}
+
 export interface ClipboardImageSaveRequest {
   bytesBase64: string;
   mime: string;
@@ -582,6 +588,46 @@ export async function fetchCaptureImageDataUrl(url: string): Promise<string> {
   }
   const invoke = await getInvoke();
   return invoke<string>('fetch_capture_image_data_url', { url });
+}
+
+/** Fetch a remote 3D model through the desktop backend and return a data URL. */
+export async function fetchModelAssetDataUrl(url: string): Promise<string> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<string>('fetch_model_asset_data_url', { url });
+}
+
+/** Read a local 3D model through the desktop backend and return a data URL. */
+export async function readModelAssetDataUrl(
+  path: string,
+  opts?: { cwd?: string },
+): Promise<string> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<string>('read_model_asset_data_url', {
+    path,
+    cwd: opts?.cwd ?? null,
+  });
+}
+
+/** Download a remote 3D model into the workspace cache. */
+export async function downloadModelAsset(
+  url: string,
+  opts?: { cwd?: string; fileName?: string },
+): Promise<ModelAssetDownload> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<ModelAssetDownload>('download_model_asset', {
+    url,
+    cwd: opts?.cwd ?? null,
+    fileName: opts?.fileName ?? null,
+  });
 }
 
 /** Best-effort cancellation for an in-flight local agent CLI invocation. */

@@ -1,4 +1,6 @@
 import {
+  Fragment,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -7,6 +9,8 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  Bone,
+  Box,
   Check,
   ChevronDown,
   Copy,
@@ -16,12 +20,15 @@ import {
   EyeOff,
   ExternalLink,
   FileText,
+  Gamepad2,
   Globe,
   Info,
   Keyboard,
   Monitor,
   Moon,
+  Music,
   Palette,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -173,6 +180,54 @@ import {
   type ImageProviderId,
 } from '@/lib/imageGeneration';
 import {
+  MUSIC_PROVIDERS,
+  loadMusicGenerationSettings,
+  musicProviderBaseUrl,
+  musicProviderModel,
+  musicProviderReady,
+  saveMusicGenerationSettings,
+  type MusicGenerationSettings,
+  type MusicProviderDefinition,
+  type MusicProviderCategory,
+  type MusicProviderId,
+} from '@/lib/musicGeneration';
+import {
+  THREE_D_RIGGING_PROVIDERS,
+  THREE_D_PROVIDERS,
+  loadThreeDGenerationSettings,
+  saveThreeDGenerationSettings,
+  threeDRiggingProviderBaseUrl,
+  threeDRiggingProviderCommand,
+  threeDRiggingProviderModel,
+  threeDRiggingProviderReady,
+  threeDRiggingInheritedKey,
+  threeDProviderBaseUrl,
+  threeDProviderById,
+  threeDProviderModel,
+  threeDProviderReady,
+  type ThreeDGenerationSettings,
+  type ThreeDProviderCategory,
+  type ThreeDProviderDefinition,
+  type ThreeDProviderId,
+  type ThreeDRiggingProviderCategory,
+  type ThreeDRiggingProviderDefinition,
+  type ThreeDRiggingProviderId,
+} from '@/lib/threeDGeneration';
+import {
+  GAME_EXPERT_LIMITS,
+  GAME_EXPERT_IDS,
+  getGameExpertCatalog,
+  type GameExpertDefinition,
+  type GameExpertEngine,
+  type GameExpertMode,
+  type GameExpertSettings as GameExpertSettingsValues,
+} from '@/lib/gameExperts';
+import {
+  localizedGameExpertName,
+  localizedGameExpertGroup,
+  localizedGameGroupLabel,
+} from '@/lib/gameExpertI18n';
+import {
   listGatewayRunOptions,
   systemDefaultGatewaySelection,
   workflowDefaultGatewaySelection,
@@ -184,6 +239,10 @@ type SettingsTab =
   | 'personalization'
   | 'models'
   | 'imageGeneration'
+  | 'musicGeneration'
+  | 'threeDGeneration'
+  | 'rigging'
+  | 'gameExperts'
   | 'consensus'
   | 'commands'
   | 'shortcuts'
@@ -196,6 +255,10 @@ const tabs: { id: SettingsTab; labelKey: TranslationKey; Icon: LucideIcon }[] = 
   { id: 'personalization', labelKey: 'settings.tabs.personalization', Icon: FileText },
   { id: 'models', labelKey: 'settings.tabs.models', Icon: Cpu },
   { id: 'imageGeneration', labelKey: 'settings.tabs.imageGeneration', Icon: Sparkles },
+  { id: 'musicGeneration', labelKey: 'settings.tabs.musicGeneration', Icon: Music },
+  { id: 'threeDGeneration', labelKey: 'settings.tabs.threeDGeneration', Icon: Box },
+  { id: 'rigging', labelKey: 'settings.tabs.rigging', Icon: Bone },
+  { id: 'gameExperts', labelKey: 'settings.tabs.gameExperts', Icon: Gamepad2 },
   { id: 'commands', labelKey: 'settings.tabs.commands', Icon: SlashSquare },
   { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', Icon: Keyboard },
   { id: 'appearance', labelKey: 'settings.tabs.appearance', Icon: Palette },
@@ -304,6 +367,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   );
   const personalInstructionsByModel = useStore((s) => s.personalInstructionsByModel);
   const setPersonalInstructions = useStore((s) => s.setPersonalInstructions);
+  const gameExpertSettings = useStore((s) => s.gameExpertSettings);
+  const setGameExpertSettings = useStore((s) => s.setGameExpertSettings);
+
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dragState = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -314,6 +388,50 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
+
+  const handleHeaderPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      // Ignore drags that start on interactive controls (e.g. the close button).
+      if (event.button !== 0) return;
+      if ((event.target as HTMLElement).closest('button, a, input, [role="button"]')) {
+        return;
+      }
+      event.preventDefault();
+      dragState.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: dragOffset.x,
+        originY: dragOffset.y,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [dragOffset.x, dragOffset.y],
+  );
+
+  const handleHeaderPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const state = dragState.current;
+      if (!state || state.pointerId !== event.pointerId) return;
+      setDragOffset({
+        x: state.originX + (event.clientX - state.startX),
+        y: state.originY + (event.clientY - state.startY),
+      });
+    },
+    [],
+  );
+
+  const handleHeaderPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const state = dragState.current;
+      if (!state || state.pointerId !== event.pointerId) return;
+      dragState.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [],
+  );
 
   const languageOptions: LanguageOption[] = [...LANGUAGE_SELECT_OPTIONS];
   const targetLanguages = languageOptions.filter(
@@ -330,10 +448,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="flex h-[86vh] w-[calc(100vw-2rem)] max-w-[980px] max-h-[660px] flex-col overflow-hidden rounded-lg border border-border bg-panel shadow-2xl sm:w-[calc(100vw-3rem)]"
+        className="flex h-[calc(100vh-2.5rem)] w-[calc(100vw-2.5rem)] max-w-[1600px] max-h-[1000px] flex-col overflow-hidden rounded-lg border border-border bg-panel shadow-2xl"
+        style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="shrink-0 border-b border-border-soft bg-bg-alt px-5 py-4">
+        <div
+          className="shrink-0 cursor-move select-none border-b border-border-soft bg-bg-alt px-5 py-4"
+          onPointerDown={handleHeaderPointerDown}
+          onPointerMove={handleHeaderPointerMove}
+          onPointerUp={handleHeaderPointerUp}
+          onPointerCancel={handleHeaderPointerUp}
+        >
           <div className="flex items-center gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-bg">
               <SettingsIcon size={18} strokeWidth={2.2} />
@@ -361,7 +486,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         <div className="min-h-0 flex flex-1 flex-col bg-border-soft sm:flex-row">
           <nav
             aria-label={t(locale, 'settings.title')}
-            className="w-full shrink-0 overflow-y-auto border-b border-border-soft bg-bg-alt p-3 sm:w-52 sm:border-b-0 sm:border-r"
+            className="w-full shrink-0 overflow-y-auto border-b border-border-soft bg-bg-alt p-3 sm:w-56 sm:border-b-0 sm:border-r"
           >
             <div
               role="tablist"
@@ -405,9 +530,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             id={panelId}
             role="tabpanel"
             aria-labelledby={`settings-tab-${tab}`}
-            className="min-w-0 flex-1 overflow-y-auto bg-panel px-6 py-5 md:px-7 md:py-6"
+            className="min-w-0 flex-1 overflow-y-auto bg-panel px-6 py-5 md:px-8 md:py-7"
           >
-            <div className="mx-auto max-w-3xl">
+            <div className={SETTINGS_CONTENT_MAX_WIDTH_CLASS}>
               {tab === 'general' ? (
                 <GeneralSettings
                   locale={locale}
@@ -428,6 +553,18 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <ChannelsSettings locale={locale} cliRuntime={cliRuntime} />
               ) : tab === 'imageGeneration' ? (
                 <ImageGenerationSettingsPanel locale={locale} />
+              ) : tab === 'musicGeneration' ? (
+                <MusicGenerationSettingsPanel locale={locale} />
+              ) : tab === 'threeDGeneration' ? (
+                <ThreeDGenerationSettingsPanel locale={locale} />
+              ) : tab === 'rigging' ? (
+                <RiggingSettingsPanel locale={locale} />
+              ) : tab === 'gameExperts' ? (
+                <GameExpertSettingsPanel
+                  locale={locale}
+                  settings={gameExpertSettings}
+                  setSettings={setGameExpertSettings}
+                />
               ) : tab === 'consensus' ? (
                 <ConsensusSettings locale={locale} />
               ) : tab === 'commands' ? (
@@ -523,7 +660,7 @@ function GeneralSettings({
         title={t(locale, 'settings.languageLabel')}
         description={t(locale, 'settings.languageDescription')}
       >
-        <div className="w-full max-w-[20rem]">
+        <div className="w-full max-w-[24rem]">
           <SelectControl
             value={locale}
             options={languageOptions}
@@ -564,7 +701,7 @@ function GeneralSettings({
         title={t(locale, 'settings.shellLabel')}
         description={t(locale, 'settings.shellDescription')}
       >
-        <div className="w-full max-w-[24rem] space-y-2">
+        <div className="w-full max-w-[32rem] space-y-2">
           <div className="flex flex-wrap gap-2">
             {(
               [
@@ -921,7 +1058,7 @@ function SelectControl<T extends string>({
   icon,
 }: {
   value: T;
-  options: { id: T; label: string; hint?: string }[];
+  options: { id: T; label: string; hint?: string; group?: string }[];
   onChange: (id: T) => void;
   icon?: ReactNode;
 }) {
@@ -969,37 +1106,52 @@ function SelectControl<T extends string>({
 
       {open && (
         <div className="absolute right-0 top-full z-20 mt-1 w-full min-w-[16rem] max-w-[20rem] overflow-hidden rounded-md border border-border bg-panel py-1 shadow-xl">
-          <ul role="listbox">
-            {options.map((option) => {
+          <ul role="listbox" className="max-h-80 overflow-y-auto">
+            {options.map((option, index) => {
               const active = option.id === value;
+              const showGroupHeader =
+                !!option.group && option.group !== options[index - 1]?.group;
               return (
-                <li key={option.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    onClick={() => {
-                      onChange(option.id);
-                      setOpen(false);
-                    }}
-                    className={cn(
-                      'flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors',
-                      active
-                        ? 'bg-border-soft text-fg'
-                        : 'text-fg-dim hover:bg-border-soft hover:text-fg',
-                    )}
-                  >
-                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                      {active && <Check size={14} strokeWidth={2.4} className="text-accent" />}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                    {option.hint && (
-                      <span className="shrink-0 font-mono text-[10px] text-fg-faint">
-                        {option.hint}
+                <Fragment key={option.id}>
+                  {showGroupHeader && (
+                    <li
+                      role="presentation"
+                      className={cn(
+                        'px-3 pb-1 pt-1.5 font-mono text-[9px] uppercase tracking-wider text-fg-faint',
+                        index > 0 && 'mt-1 border-t border-border-soft',
+                      )}
+                    >
+                      {option.group}
+                    </li>
+                  )}
+                  <li>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      onClick={() => {
+                        onChange(option.id);
+                        setOpen(false);
+                      }}
+                      className={cn(
+                        'flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors',
+                        active
+                          ? 'bg-border-soft text-fg'
+                          : 'text-fg-dim hover:bg-border-soft hover:text-fg',
+                      )}
+                    >
+                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
+                        {active && <Check size={14} strokeWidth={2.4} className="text-accent" />}
                       </span>
-                    )}
-                  </button>
-                </li>
+                      <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                      {option.hint && (
+                        <span className="shrink-0 font-mono text-[10px] text-fg-faint">
+                          {option.hint}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                </Fragment>
               );
             })}
           </ul>
@@ -1047,6 +1199,12 @@ const SYSTEM_DEFAULT_OPTION_PREFIX = 'system-default:';
 const FREE_CHANNEL_OPTION_PREFIX = 'free:';
 const MODEL_DEFAULT_OPTION_ID = '__default_model__';
 const CLAUDE_MODEL_CLASS_OPTIONS = ['sonnet', 'opus', 'haiku'];
+const SETTINGS_CONTENT_MAX_WIDTH_CLASS = 'w-full max-w-[1180px]';
+const SETTINGS_INNER_TABLIST_CLASS =
+  'flex w-full min-w-0 flex-wrap gap-1 rounded-lg border border-border-soft bg-bg p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]';
+const SETTINGS_INNER_TAB_CLASS =
+  'min-h-11 min-w-[7rem] flex-1 basis-[8.5rem] rounded-md border px-5 py-2.5 text-sm font-semibold outline-none transition-[background-color,border-color,color,box-shadow] focus-visible:ring-1 focus-visible:ring-accent';
+const SETTINGS_PROVIDER_GRID_CLASS = 'grid gap-2.5 xl:grid-cols-2';
 
 function defaultProviderOptionId(providerId: string): string {
   return `${DEFAULT_PROVIDER_OPTION_PREFIX}${providerId}`;
@@ -1077,6 +1235,20 @@ function freeChannelFromOption(optionId: string): string | null {
   if (!optionId.startsWith(FREE_CHANNEL_OPTION_PREFIX)) return null;
   const channelId = optionId.slice(FREE_CHANNEL_OPTION_PREFIX.length);
   return freeChannelById(channelId) ? channelId : null;
+}
+
+function defaultChannelRuntimeLabel(
+  locale: Locale,
+  adapter: { label: string },
+): string {
+  return `${adapter.label} · ${t(locale, 'dock.channelKindDefault')}`;
+}
+
+function defaultChannelRuntimeGroup(
+  locale: Locale,
+  adapter: { label: string },
+): string {
+  return `${t(locale, 'dock.channelGroupDefault')} · ${adapter.label}`;
 }
 
 function modelFromOptionId(optionId: string): string {
@@ -1134,7 +1306,7 @@ function ChannelsSettings({
         <div
           role="tablist"
           aria-orientation="horizontal"
-          className="inline-flex w-fit gap-1 rounded-lg border border-border-soft bg-bg p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+          className={SETTINGS_INNER_TABLIST_CLASS}
         >
           {channelTabs.map((item) => {
             const active = channelTab === item.id;
@@ -1146,7 +1318,7 @@ function ChannelsSettings({
                 aria-selected={active}
                 onClick={() => setChannelTab(item.id)}
                 className={cn(
-                  'min-h-11 min-w-[7rem] rounded-md border px-5 py-2.5 text-sm font-semibold outline-none transition-[background-color,border-color,color,box-shadow] focus-visible:ring-1 focus-visible:ring-accent',
+                  SETTINGS_INNER_TAB_CLASS,
                   active
                     ? 'border-accent bg-accent text-bg shadow-[0_8px_18px_-14px_rgba(124,140,255,0.9)]'
                     : 'border-transparent text-fg-faint hover:border-border-soft hover:bg-panel hover:text-fg',
@@ -1231,12 +1403,13 @@ function GlobalRunControls({
   const channelOptions = useMemo(
     () => {
       const defaultOptions = RUNTIME_ADAPTERS.flatMap((adapter) => {
-        const group = `${t(locale, 'dock.channelGroupDefault')} · ${adapter.label}`;
+        const hint = defaultChannelRuntimeLabel(locale, adapter);
+        const group = defaultChannelRuntimeGroup(locale, adapter);
         return [
           {
             id: systemDefaultOptionId(adapter.id),
             label: `${adapter.label} · ${t(locale, 'dock.channelSystemDefault')}`,
-            hint: t(locale, 'settings.models.sourceSystemCli'),
+            hint,
             group,
           },
           ...defaultChannelProviders
@@ -1244,7 +1417,7 @@ function GlobalRunControls({
             .map(({ provider }) => ({
               id: defaultProviderOptionId(provider.id),
               label: provider.name.trim() || adapter.label,
-              hint: t(locale, 'dock.channelKindDefault'),
+              hint,
               group,
             })),
         ];
@@ -1810,7 +1983,7 @@ function ModelsSettings({
                 {t(locale, 'settings.models.add')}
               </button>
             </div>
-            <div className="space-y-2.5">
+            <div className={SETTINGS_PROVIDER_GRID_CLASS}>
               {sectionCards.map(({ provider, runtime }) => (
                 <DefaultChannelRow
                   key={provider.id}
@@ -2534,7 +2707,7 @@ function ProviderEditor({
               {saveError}
             </p>
           )}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {onDelete && (
               <button
                 type="button"
@@ -2856,7 +3029,7 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
         <div
           role="tablist"
           aria-orientation="horizontal"
-          className="inline-flex w-fit gap-1 rounded-lg border border-border-soft bg-bg p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+          className={SETTINGS_INNER_TABLIST_CLASS}
         >
           {imageProviderCategoryOrder.map((item) => {
             const active = category === item;
@@ -2868,7 +3041,7 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
                 aria-selected={active}
                 onClick={() => setCategory(item)}
                 className={cn(
-                  'min-h-11 min-w-[7rem] rounded-md border px-5 py-2.5 text-sm font-semibold outline-none transition-[background-color,border-color,color,box-shadow] focus-visible:ring-1 focus-visible:ring-accent',
+                  SETTINGS_INNER_TAB_CLASS,
                   active
                     ? 'border-accent bg-accent text-bg shadow-[0_8px_18px_-14px_rgba(124,140,255,0.9)]'
                     : 'border-transparent text-fg-faint hover:border-border-soft hover:bg-panel hover:text-fg',
@@ -2893,7 +3066,7 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
           </div>
           <StatusBadge state="default" label={String(activeProviders.length)} />
         </div>
-        <div className="space-y-2.5">
+        <div className={SETTINGS_PROVIDER_GRID_CLASS}>
           {activeProviders.map((provider) => (
             <ImageProviderSettingsRow
               key={provider.id}
@@ -3025,7 +3198,7 @@ function ImageProviderSettingsRow({
     <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold text-fg">{provider.label}</span>
             <span
               className={cn(
@@ -3053,7 +3226,12 @@ function ImageProviderSettingsRow({
             <ExternalLink size={13} strokeWidth={2.2} />
             {provider.local
               ? t(locale, 'dock.localModelDownload')
-              : t(locale, 'settings.freeChannels.getKey')}
+              : t(
+                  locale,
+                  ready
+                    ? 'settings.freeChannels.manageKey'
+                    : 'settings.freeChannels.getKey',
+                )}
           </button>
         )}
       </div>
@@ -3062,7 +3240,7 @@ function ImageProviderSettingsRow({
         {provider.needsAccountId && (
           <label className="block space-y-1">
             <span className="text-[11px] font-medium text-fg-dim">
-              {t(locale, 'settings.imageGeneration.accountIdLabel')}
+              {provider.accountIdLabel ?? t(locale, 'settings.imageGeneration.accountIdLabel')}
             </span>
             <input
               type="text"
@@ -3070,7 +3248,7 @@ function ImageProviderSettingsRow({
               onChange={(event) =>
                 patchProvider({ accountId: event.target.value })
               }
-              placeholder="Cloudflare Account ID"
+              placeholder={provider.accountIdPlaceholder ?? 'Cloudflare Account ID'}
               autoComplete="off"
               spellCheck={false}
               className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
@@ -3081,7 +3259,7 @@ function ImageProviderSettingsRow({
         {provider.needsKey || provider.id === 'pollinations' || provider.id === 'ai-horde' ? (
           <label className="block space-y-1">
             <span className="text-[11px] font-medium text-fg-dim">
-              {t(locale, 'settings.models.apiKey')}
+              {provider.keyLabel ?? t(locale, 'settings.models.apiKey')}
             </span>
             <div className="relative">
               <input
@@ -3089,9 +3267,10 @@ function ImageProviderSettingsRow({
                 value={keyValue}
                 onChange={(event) => patchProvider({ key: event.target.value })}
                 placeholder={
-                  provider.id === 'ai-horde'
+                  provider.keyPlaceholder ??
+                  (provider.id === 'ai-horde'
                     ? 'optional, anonymous if empty'
-                    : 'sk-...'
+                    : 'sk-...')
                 }
                 autoComplete="off"
                 spellCheck={false}
@@ -3124,7 +3303,7 @@ function ImageProviderSettingsRow({
           </label>
         ) : null}
 
-        <label className="block space-y-1">
+        <label className="block space-y-1 md:col-span-2">
           <span className="text-[11px] font-medium text-fg-dim">
             {t(locale, 'settings.freeChannels.modelLabel')}
           </span>
@@ -3167,6 +3346,1176 @@ function ImageProviderSettingsRow({
               value={baseUrl}
               onChange={(event) => patchProvider({ baseUrl: event.target.value })}
               placeholder={imageProviderBaseUrl(provider.id, settings) || provider.endpointPlaceholder}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
+  const [settings, setSettings] = useState<MusicGenerationSettings>(() =>
+    loadMusicGenerationSettings(),
+  );
+  const [category, setCategory] = useState<MusicProviderCategory>('commercial');
+
+  const update = (patch: Partial<MusicGenerationSettings>) => {
+    const next = { ...settings, ...patch };
+    saveMusicGenerationSettings(next);
+    setSettings(loadMusicGenerationSettings());
+  };
+
+  const providerOptions = MUSIC_PROVIDERS.map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    hint: `${musicProviderCategoryLabel(provider.category, locale)} · ${musicProviderStatusLabel(
+      provider,
+      settings,
+      locale,
+    )}`,
+    group: musicProviderCategoryLabel(provider.category, locale),
+  }));
+  const activeProviders = MUSIC_PROVIDERS.filter(
+    (provider) => provider.category === category,
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-lg font-semibold text-fg">
+          {t(locale, 'settings.musicGeneration.title')}
+        </h3>
+        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+          {t(locale, 'settings.musicGeneration.description')}
+        </p>
+      </div>
+
+      <SettingRow
+        title={t(locale, 'settings.musicGeneration.enabledLabel')}
+        description={t(locale, 'settings.musicGeneration.enabledDesc')}
+      >
+        <SwitchControl
+          checked={settings.enabled}
+          onChange={(enabled) => update({ enabled })}
+        />
+      </SettingRow>
+
+      <SettingRow
+        title={t(locale, 'settings.musicGeneration.defaultProviderLabel')}
+        description={t(locale, 'settings.musicGeneration.defaultProviderDesc')}
+      >
+        <div className="w-full min-w-[14rem]">
+          <SelectControl
+            value={settings.preferredProviderId}
+            options={providerOptions}
+            onChange={(id) =>
+              update({ preferredProviderId: id as MusicProviderId })
+            }
+            icon={<Music size={15} strokeWidth={2.1} />}
+          />
+        </div>
+      </SettingRow>
+
+      <div>
+        <div
+          role="tablist"
+          aria-orientation="horizontal"
+          className={SETTINGS_INNER_TABLIST_CLASS}
+        >
+          {musicProviderCategoryOrder.map((item) => {
+            const active = category === item;
+            return (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setCategory(item)}
+                className={cn(
+                  SETTINGS_INNER_TAB_CLASS,
+                  active
+                    ? 'border-accent bg-accent text-bg shadow-[0_8px_18px_-14px_rgba(124,140,255,0.9)]'
+                    : 'border-transparent text-fg-faint hover:border-border-soft hover:bg-panel hover:text-fg',
+                )}
+              >
+                {t(locale, musicProviderCategoryTitleKey(item))}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h4 className="text-sm font-semibold text-fg">
+              {t(locale, musicProviderCategoryTitleKey(category))}
+            </h4>
+            <p className="text-xs leading-relaxed text-fg-faint">
+              {t(locale, musicProviderCategoryDescKey(category))}
+            </p>
+          </div>
+          <StatusBadge state="default" label={String(activeProviders.length)} />
+        </div>
+        <div className={SETTINGS_PROVIDER_GRID_CLASS}>
+          {activeProviders.map((provider) => (
+            <MusicProviderSettingsRow
+              key={provider.id}
+              provider={provider}
+              settings={settings}
+              locale={locale}
+              onChange={(next) => {
+                saveMusicGenerationSettings(next);
+                setSettings(loadMusicGenerationSettings());
+              }}
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const musicProviderCategoryOrder: MusicProviderCategory[] = ['commercial', 'free'];
+
+function musicProviderCategoryTitleKey(
+  category: MusicProviderCategory,
+): TranslationKey {
+  return category === 'free'
+    ? 'settings.musicGeneration.freeProviders'
+    : 'settings.musicGeneration.commercialProviders';
+}
+
+function musicProviderCategoryDescKey(
+  category: MusicProviderCategory,
+): TranslationKey {
+  return category === 'free'
+    ? 'settings.musicGeneration.freeProvidersDesc'
+    : 'settings.musicGeneration.commercialProvidersDesc';
+}
+
+function musicProviderCategoryLabel(
+  category: MusicProviderCategory,
+  locale: Locale,
+): string {
+  return t(
+    locale,
+    category === 'free'
+      ? 'settings.musicGeneration.categoryFree'
+      : 'settings.musicGeneration.categoryCommercial',
+  );
+}
+
+function musicProviderCategoryBadgeClass(category: MusicProviderCategory): string {
+  return category === 'free'
+    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+    : 'border-sky-500/30 bg-sky-500/10 text-sky-300';
+}
+
+function musicProviderStatusLabel(
+  provider: MusicProviderDefinition,
+  settings: MusicGenerationSettings,
+  locale: Locale,
+): string {
+  if (musicProviderReady(provider.id, settings)) {
+    return t(locale, 'settings.freeChannels.ready');
+  }
+  if (provider.local) return t(locale, 'settings.freeChannels.localNeedsSetup');
+  if (provider.needsKey) return t(locale, 'settings.freeChannels.needsKey');
+  return t(locale, 'settings.imageGeneration.noKeyRequired');
+}
+
+function MusicProviderSettingsRow({
+  provider,
+  settings,
+  locale,
+  onChange,
+}: {
+  provider: MusicProviderDefinition;
+  settings: MusicGenerationSettings;
+  locale: Locale;
+  onChange: (settings: MusicGenerationSettings) => void;
+}) {
+  const [showKey, setShowKey] = useState(false);
+  const keyProviderId = provider.keyProviderId ?? provider.id;
+  const keyValue = settings.providerKeys[keyProviderId] ?? '';
+  const baseUrl = settings.providerBaseUrls[provider.id] ?? '';
+  const model = musicProviderModel(provider.id, settings);
+  const ready = musicProviderReady(provider.id, settings);
+  const KeyIcon = showKey ? EyeOff : Eye;
+
+  const patchProvider = (
+    patch: Partial<{
+      key: string;
+      baseUrl: string;
+      model: string;
+    }>,
+  ) => {
+    const next: MusicGenerationSettings = {
+      ...settings,
+      providerKeys: { ...settings.providerKeys },
+      providerBaseUrls: { ...settings.providerBaseUrls },
+      providerModels: { ...settings.providerModels },
+    };
+    if (patch.key !== undefined) {
+      const value = patch.key.trim();
+      if (value) next.providerKeys[keyProviderId] = value;
+      else delete next.providerKeys[keyProviderId];
+    }
+    if (patch.baseUrl !== undefined) {
+      const value = patch.baseUrl.trim();
+      if (value) next.providerBaseUrls[provider.id] = value;
+      else delete next.providerBaseUrls[provider.id];
+    }
+    if (patch.model !== undefined) {
+      const value = patch.model.trim();
+      if (value) next.providerModels[provider.id] = value;
+      else delete next.providerModels[provider.id];
+    }
+    if (
+      !musicProviderReady(next.preferredProviderId, next) &&
+      musicProviderReady(provider.id, next)
+    ) {
+      next.preferredProviderId = provider.id;
+    }
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            <span
+              className={cn(
+                'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                musicProviderCategoryBadgeClass(provider.category),
+              )}
+            >
+              {musicProviderCategoryLabel(provider.category, locale)}
+            </span>
+            <StatusBadge
+              state={ready ? 'direct' : 'unavailable'}
+              label={musicProviderStatusLabel(provider, settings, locale)}
+            />
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-fg-faint">
+            {provider.note}
+          </p>
+        </div>
+        {provider.credentialUrl && (
+          <button
+            type="button"
+            onClick={() => void openExternal(provider.credentialUrl as string)}
+            className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+          >
+            <ExternalLink size={13} strokeWidth={2.2} />
+            {provider.local
+              ? t(locale, 'dock.localModelDownload')
+              : t(
+                  locale,
+                  ready
+                    ? 'settings.freeChannels.manageKey'
+                    : 'settings.freeChannels.getKey',
+                )}
+          </button>
+        )}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        {provider.needsKey && (
+          <label className="block space-y-1">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {provider.keyLabel ?? t(locale, 'settings.models.apiKey')}
+            </span>
+            <div className="relative">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={keyValue}
+                onChange={(event) => patchProvider({ key: event.target.value })}
+                placeholder={provider.keyPlaceholder ?? 'sk-...'}
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 pr-14 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+              />
+              <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setShowKey((v) => !v)}
+                  title={t(
+                    locale,
+                    showKey ? 'settings.models.hideKey' : 'settings.models.showKey',
+                  )}
+                  className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg"
+                >
+                  <KeyIcon size={13} strokeWidth={2} />
+                </button>
+                {keyValue && (
+                  <button
+                    type="button"
+                    onClick={() => patchProvider({ key: '' })}
+                    title={t(locale, 'settings.models.clear')}
+                    className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-rose-300"
+                  >
+                    <Trash2 size={13} strokeWidth={2} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </label>
+        )}
+
+        <label className="block space-y-1 md:col-span-2">
+          <span className="text-[11px] font-medium text-fg-dim">
+            {t(locale, 'settings.freeChannels.modelLabel')}
+          </span>
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(9rem,13rem)]">
+            <input
+              type="text"
+              value={model}
+              onChange={(event) => patchProvider({ model: event.target.value })}
+              placeholder={provider.defaultModel}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+            <select
+              value={provider.models.includes(model) ? model : ''}
+              onChange={(event) => {
+                if (event.target.value) {
+                  patchProvider({ model: event.target.value });
+                }
+              }}
+              className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
+            >
+              <option value="">{t(locale, 'settings.models.selectModel')}</option>
+              {provider.models.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+        </label>
+
+        {provider.supportsBaseUrl && (
+          <label className="block space-y-1 md:col-span-2">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {t(locale, 'settings.models.baseUrl')}
+            </span>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(event) => patchProvider({ baseUrl: event.target.value })}
+              placeholder={
+                musicProviderBaseUrl(provider.id, settings) ||
+                provider.endpointPlaceholder
+              }
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ThreeDGenerationSettingsPanel({ locale }: { locale: Locale }) {
+  const [settings, setSettings] = useState<ThreeDGenerationSettings>(() =>
+    loadThreeDGenerationSettings(),
+  );
+  const [category, setCategory] = useState<ThreeDProviderCategory>('commercial');
+
+  const update = (patch: Partial<ThreeDGenerationSettings>) => {
+    const next = { ...settings, ...patch };
+    saveThreeDGenerationSettings(next);
+    setSettings(loadThreeDGenerationSettings());
+  };
+
+  const providerOptions = THREE_D_PROVIDERS.map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    hint: `${threeDProviderCategoryLabel(provider.category, locale)} · ${threeDProviderStatusLabel(
+      provider,
+      settings,
+      locale,
+    )}`,
+    group: threeDProviderCategoryLabel(provider.category, locale),
+  }));
+  const activeProviders = THREE_D_PROVIDERS.filter(
+    (provider) => provider.category === category,
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-lg font-semibold text-fg">
+          {t(locale, 'settings.threeDGeneration.title')}
+        </h3>
+        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+          {t(locale, 'settings.threeDGeneration.description')}
+        </p>
+      </div>
+
+      <SettingRow
+        title={t(locale, 'settings.threeDGeneration.enabledLabel')}
+        description={t(locale, 'settings.threeDGeneration.enabledDesc')}
+      >
+        <SwitchControl
+          checked={settings.enabled}
+          onChange={(enabled) => update({ enabled })}
+        />
+      </SettingRow>
+
+      <SettingRow
+        title={t(locale, 'settings.threeDGeneration.defaultProviderLabel')}
+        description={t(locale, 'settings.threeDGeneration.defaultProviderDesc')}
+      >
+        <div className="w-full min-w-[14rem]">
+          <SelectControl
+            value={settings.preferredProviderId}
+            options={providerOptions}
+            onChange={(id) =>
+              update({ preferredProviderId: id as ThreeDProviderId })
+            }
+            icon={<Box size={15} strokeWidth={2.1} />}
+          />
+        </div>
+      </SettingRow>
+
+      <div>
+        <div
+          role="tablist"
+          aria-orientation="horizontal"
+          className={SETTINGS_INNER_TABLIST_CLASS}
+        >
+          {threeDProviderCategoryOrder.map((item) => {
+            const active = category === item;
+            return (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setCategory(item)}
+                className={cn(
+                  SETTINGS_INNER_TAB_CLASS,
+                  active
+                    ? 'border-accent bg-accent text-bg shadow-[0_8px_18px_-14px_rgba(124,140,255,0.9)]'
+                    : 'border-transparent text-fg-faint hover:border-border-soft hover:bg-panel hover:text-fg',
+                )}
+              >
+                {t(locale, threeDProviderCategoryTitleKey(item))}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h4 className="text-sm font-semibold text-fg">
+              {t(locale, threeDProviderCategoryTitleKey(category))}
+            </h4>
+            <p className="text-xs leading-relaxed text-fg-faint">
+              {t(locale, threeDProviderCategoryDescKey(category))}
+            </p>
+          </div>
+          <StatusBadge state="default" label={String(activeProviders.length)} />
+        </div>
+        <div className={SETTINGS_PROVIDER_GRID_CLASS}>
+          {activeProviders.map((provider) => (
+            <ThreeDProviderSettingsRow
+              key={provider.id}
+              provider={provider}
+              settings={settings}
+              locale={locale}
+              onChange={(next) => {
+                saveThreeDGenerationSettings(next);
+                setSettings(loadThreeDGenerationSettings());
+              }}
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const threeDProviderCategoryOrder: ThreeDProviderCategory[] = ['commercial', 'free'];
+
+function threeDProviderCategoryTitleKey(
+  category: ThreeDProviderCategory,
+): TranslationKey {
+  return category === 'free'
+    ? 'settings.threeDGeneration.freeProviders'
+    : 'settings.threeDGeneration.commercialProviders';
+}
+
+function threeDProviderCategoryDescKey(
+  category: ThreeDProviderCategory,
+): TranslationKey {
+  return category === 'free'
+    ? 'settings.threeDGeneration.freeProvidersDesc'
+    : 'settings.threeDGeneration.commercialProvidersDesc';
+}
+
+function threeDProviderCategoryLabel(
+  category: ThreeDProviderCategory,
+  locale: Locale,
+): string {
+  return t(
+    locale,
+    category === 'free'
+      ? 'settings.threeDGeneration.categoryFree'
+      : 'settings.threeDGeneration.categoryCommercial',
+  );
+}
+
+function threeDProviderCategoryBadgeClass(category: ThreeDProviderCategory): string {
+  return category === 'free'
+    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+    : 'border-sky-500/30 bg-sky-500/10 text-sky-300';
+}
+
+function threeDProviderStatusLabel(
+  provider: ThreeDProviderDefinition,
+  settings: ThreeDGenerationSettings,
+  locale: Locale,
+): string {
+  if (threeDProviderReady(provider.id, settings)) {
+    return t(locale, 'settings.freeChannels.ready');
+  }
+  if (provider.local) return t(locale, 'settings.freeChannels.localNeedsSetup');
+  if (provider.needsKey) return t(locale, 'settings.freeChannels.needsKey');
+  return t(locale, 'settings.imageGeneration.noKeyRequired');
+}
+
+function ThreeDProviderSettingsRow({
+  provider,
+  settings,
+  locale,
+  onChange,
+}: {
+  provider: ThreeDProviderDefinition;
+  settings: ThreeDGenerationSettings;
+  locale: Locale;
+  onChange: (settings: ThreeDGenerationSettings) => void;
+}) {
+  const [showKey, setShowKey] = useState(false);
+  const keyProviderId = provider.keyProviderId ?? provider.id;
+  const keyValue = settings.providerKeys[keyProviderId] ?? '';
+  const baseUrl = settings.providerBaseUrls[provider.id] ?? '';
+  const model = threeDProviderModel(provider.id, settings);
+  const ready = threeDProviderReady(provider.id, settings);
+  const KeyIcon = showKey ? EyeOff : Eye;
+
+  const patchProvider = (
+    patch: Partial<{
+      key: string;
+      baseUrl: string;
+      model: string;
+    }>,
+  ) => {
+    const next: ThreeDGenerationSettings = {
+      ...settings,
+      providerKeys: { ...settings.providerKeys },
+      providerBaseUrls: { ...settings.providerBaseUrls },
+      providerModels: { ...settings.providerModels },
+    };
+    if (patch.key !== undefined) {
+      const value = patch.key.trim();
+      if (value) next.providerKeys[keyProviderId] = value;
+      else delete next.providerKeys[keyProviderId];
+    }
+    if (patch.baseUrl !== undefined) {
+      const value = patch.baseUrl.trim();
+      if (value) next.providerBaseUrls[provider.id] = value;
+      else delete next.providerBaseUrls[provider.id];
+    }
+    if (patch.model !== undefined) {
+      const value = patch.model.trim();
+      if (value) next.providerModels[provider.id] = value;
+      else delete next.providerModels[provider.id];
+    }
+    if (
+      !threeDProviderReady(next.preferredProviderId, next) &&
+      threeDProviderReady(provider.id, next)
+    ) {
+      next.preferredProviderId = provider.id;
+    }
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            <span
+              className={cn(
+                'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                threeDProviderCategoryBadgeClass(provider.category),
+              )}
+            >
+              {threeDProviderCategoryLabel(provider.category, locale)}
+            </span>
+            <StatusBadge
+              state={ready ? 'direct' : 'unavailable'}
+              label={threeDProviderStatusLabel(provider, settings, locale)}
+            />
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-fg-faint">
+            {provider.note}
+          </p>
+        </div>
+        {provider.credentialUrl && (
+          <button
+            type="button"
+            onClick={() => void openExternal(provider.credentialUrl as string)}
+            className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+          >
+            <ExternalLink size={13} strokeWidth={2.2} />
+            {provider.local
+              ? t(locale, 'dock.localModelDownload')
+              : t(
+                  locale,
+                  ready
+                    ? 'settings.freeChannels.manageKey'
+                    : 'settings.freeChannels.getKey',
+                )}
+          </button>
+        )}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        {provider.needsKey && (
+          <label className="block space-y-1">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {provider.keyLabel ?? t(locale, 'settings.models.apiKey')}
+            </span>
+            <div className="relative">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={keyValue}
+                onChange={(event) => patchProvider({ key: event.target.value })}
+                placeholder={provider.keyPlaceholder ?? 'sk-...'}
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 pr-14 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+              />
+              <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setShowKey((v) => !v)}
+                  title={t(
+                    locale,
+                    showKey ? 'settings.models.hideKey' : 'settings.models.showKey',
+                  )}
+                  className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg"
+                >
+                  <KeyIcon size={13} strokeWidth={2} />
+                </button>
+                {keyValue && (
+                  <button
+                    type="button"
+                    onClick={() => patchProvider({ key: '' })}
+                    title={t(locale, 'settings.models.clear')}
+                    className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-rose-300"
+                  >
+                    <Trash2 size={13} strokeWidth={2} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </label>
+        )}
+
+        <label className="block space-y-1 md:col-span-2">
+          <span className="text-[11px] font-medium text-fg-dim">
+            {t(locale, 'settings.freeChannels.modelLabel')}
+          </span>
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(9rem,13rem)]">
+            <input
+              type="text"
+              value={model}
+              onChange={(event) => patchProvider({ model: event.target.value })}
+              placeholder={provider.defaultModel}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+            <select
+              value={provider.models.includes(model) ? model : ''}
+              onChange={(event) => {
+                if (event.target.value) {
+                  patchProvider({ model: event.target.value });
+                }
+              }}
+              className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
+            >
+              <option value="">{t(locale, 'settings.models.selectModel')}</option>
+              {provider.models.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+        </label>
+
+        {provider.supportsBaseUrl && (
+          <label className="block space-y-1 md:col-span-2">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {t(locale, 'settings.models.baseUrl')}
+            </span>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(event) => patchProvider({ baseUrl: event.target.value })}
+              placeholder={
+                threeDProviderBaseUrl(provider.id, settings) ||
+                provider.endpointPlaceholder
+              }
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RiggingSettingsPanel({ locale }: { locale: Locale }) {
+  const [settings, setSettings] = useState<ThreeDGenerationSettings>(() =>
+    loadThreeDGenerationSettings(),
+  );
+  const [channel, setChannel] = useState<RiggingChannelTab>('commercial');
+
+  const update = (patch: Partial<ThreeDGenerationSettings['rigging']>) => {
+    const next: ThreeDGenerationSettings = {
+      ...settings,
+      rigging: { ...settings.rigging, ...patch },
+    };
+    saveThreeDGenerationSettings(next);
+    setSettings(loadThreeDGenerationSettings());
+  };
+
+  const providerOptions = THREE_D_RIGGING_PROVIDERS.map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    hint: `${riggingProviderCategoryLabel(provider.category, locale)} · ${riggingProviderStatusLabel(
+      provider,
+      settings,
+      locale,
+    )}`,
+    group: t(locale, riggingChannelTitleKey(riggingChannelForCategory(provider.category))),
+  }));
+  const activeProviders = THREE_D_RIGGING_PROVIDERS.filter(
+    (provider) => riggingChannelForCategory(provider.category) === channel,
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-lg font-semibold text-fg">
+          {t(locale, 'settings.rigging.title')}
+        </h3>
+        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+          {t(locale, 'settings.rigging.description')}
+        </p>
+      </div>
+
+      <SettingRow
+        title={t(locale, 'settings.rigging.enabledLabel')}
+        description={t(locale, 'settings.rigging.enabledDesc')}
+      >
+        <SwitchControl
+          checked={settings.rigging.enabled}
+          onChange={(enabled) => update({ enabled })}
+        />
+      </SettingRow>
+
+      <SettingRow
+        title={t(locale, 'settings.rigging.defaultProviderLabel')}
+        description={t(locale, 'settings.rigging.defaultProviderDesc')}
+      >
+        <div className="w-full min-w-[14rem]">
+          <SelectControl
+            value={settings.rigging.preferredProviderId}
+            options={providerOptions}
+            onChange={(id) => update({ preferredProviderId: id as ThreeDRiggingProviderId })}
+            icon={<Bone size={15} strokeWidth={2.1} />}
+          />
+        </div>
+      </SettingRow>
+
+      <div className="rounded-lg border border-border bg-bg-alt p-4">
+        <div className="flex items-start gap-3">
+          <Info size={15} strokeWidth={2.1} className="mt-0.5 shrink-0 text-accent" />
+          <p className="text-xs leading-relaxed text-fg-faint">
+            {t(locale, 'settings.rigging.externalInstallNotice')}
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <div
+          role="tablist"
+          aria-orientation="horizontal"
+          className={SETTINGS_INNER_TABLIST_CLASS}
+        >
+          {riggingChannelOrder.map((item) => {
+            const active = channel === item;
+            return (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setChannel(item)}
+                className={cn(
+                  SETTINGS_INNER_TAB_CLASS,
+                  active
+                    ? 'border-accent bg-accent text-bg shadow-[0_8px_18px_-14px_rgba(124,140,255,0.9)]'
+                    : 'border-transparent text-fg-faint hover:border-border-soft hover:bg-panel hover:text-fg',
+                )}
+              >
+                {t(locale, riggingChannelTitleKey(item))}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h4 className="text-sm font-semibold text-fg">
+              {t(locale, riggingChannelTitleKey(channel))}
+            </h4>
+            <p className="text-xs leading-relaxed text-fg-faint">
+              {t(locale, riggingChannelDescKey(channel))}
+            </p>
+          </div>
+          <StatusBadge state="default" label={String(activeProviders.length)} />
+        </div>
+        <div className={SETTINGS_PROVIDER_GRID_CLASS}>
+          {activeProviders.map((provider) => (
+            <RiggingProviderSettingsRow
+              key={provider.id}
+              provider={provider}
+              settings={settings}
+              locale={locale}
+              onChange={(next) => {
+                saveThreeDGenerationSettings(next);
+                setSettings(loadThreeDGenerationSettings());
+              }}
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+type RiggingChannelTab = 'commercial' | 'free';
+
+const riggingChannelOrder: RiggingChannelTab[] = ['commercial', 'free'];
+
+/**
+ * Online rigging APIs are the commercial channel; local tools and manual
+ * imports fold into the free channel — mirroring the Mesh channel's
+ * commercial / free split.
+ */
+function riggingChannelForCategory(
+  category: ThreeDRiggingProviderCategory,
+): RiggingChannelTab {
+  return category === 'online' ? 'commercial' : 'free';
+}
+
+function riggingChannelTitleKey(channel: RiggingChannelTab): TranslationKey {
+  return channel === 'free'
+    ? 'settings.rigging.freeChannel'
+    : 'settings.rigging.commercialChannel';
+}
+
+function riggingChannelDescKey(channel: RiggingChannelTab): TranslationKey {
+  return channel === 'free'
+    ? 'settings.rigging.freeChannelDesc'
+    : 'settings.rigging.commercialChannelDesc';
+}
+
+function riggingProviderCategoryLabel(
+  category: ThreeDRiggingProviderCategory,
+  locale: Locale,
+): string {
+  if (category === 'local') return t(locale, 'settings.rigging.categoryLocal');
+  if (category === 'manual') return t(locale, 'settings.rigging.categoryManual');
+  return t(locale, 'settings.rigging.categoryOnline');
+}
+
+function riggingProviderCategoryBadgeClass(category: ThreeDRiggingProviderCategory): string {
+  if (category === 'local') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+  if (category === 'manual') return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+  return 'border-sky-500/30 bg-sky-500/10 text-sky-300';
+}
+
+function riggingProviderStatusLabel(
+  provider: ThreeDRiggingProviderDefinition,
+  settings: ThreeDGenerationSettings,
+  locale: Locale,
+): string {
+  if (threeDRiggingProviderReady(provider.id, settings)) {
+    return t(locale, 'settings.freeChannels.ready');
+  }
+  if (provider.category === 'manual') return t(locale, 'settings.rigging.manualOnly');
+  if (provider.supportsCommand) return t(locale, 'settings.rigging.needsCommand');
+  if (provider.local) return t(locale, 'settings.freeChannels.localNeedsSetup');
+  if (provider.needsKey) return t(locale, 'settings.freeChannels.needsKey');
+  return t(locale, 'settings.imageGeneration.noKeyRequired');
+}
+
+function RiggingProviderSettingsRow({
+  provider,
+  settings,
+  locale,
+  onChange,
+}: {
+  provider: ThreeDRiggingProviderDefinition;
+  settings: ThreeDGenerationSettings;
+  locale: Locale;
+  onChange: (settings: ThreeDGenerationSettings) => void;
+}) {
+  const [showKey, setShowKey] = useState(false);
+  const keyValue = settings.rigging.providerKeys[provider.id] ?? '';
+  const inherited = threeDRiggingInheritedKey(provider.id, settings);
+  const inheritedSourceLabel = inherited
+    ? threeDProviderById(inherited.sourceProviderId).label
+    : '';
+  const baseUrl = settings.rigging.providerBaseUrls[provider.id] ?? '';
+  const command = settings.rigging.providerCommands[provider.id] ?? '';
+  const model = threeDRiggingProviderModel(provider.id, settings);
+  const ready = threeDRiggingProviderReady(provider.id, settings);
+  const KeyIcon = showKey ? EyeOff : Eye;
+
+  const patchProvider = (
+    patch: Partial<{
+      key: string;
+      baseUrl: string;
+      command: string;
+      model: string;
+    }>,
+  ) => {
+    const next: ThreeDGenerationSettings = {
+      ...settings,
+      rigging: {
+        ...settings.rigging,
+        providerKeys: { ...settings.rigging.providerKeys },
+        providerBaseUrls: { ...settings.rigging.providerBaseUrls },
+        providerCommands: { ...settings.rigging.providerCommands },
+        providerModels: { ...settings.rigging.providerModels },
+      },
+    };
+    if (patch.key !== undefined) {
+      const value = patch.key.trim();
+      if (value) next.rigging.providerKeys[provider.id] = value;
+      else delete next.rigging.providerKeys[provider.id];
+    }
+    if (patch.baseUrl !== undefined) {
+      const value = patch.baseUrl.trim();
+      if (value) next.rigging.providerBaseUrls[provider.id] = value;
+      else delete next.rigging.providerBaseUrls[provider.id];
+    }
+    if (patch.command !== undefined) {
+      const value = patch.command.trim();
+      if (value) next.rigging.providerCommands[provider.id] = value;
+      else delete next.rigging.providerCommands[provider.id];
+    }
+    if (patch.model !== undefined) {
+      const value = patch.model.trim();
+      if (value) next.rigging.providerModels[provider.id] = value;
+      else delete next.rigging.providerModels[provider.id];
+    }
+    if (
+      !threeDRiggingProviderReady(next.rigging.preferredProviderId, next) &&
+      threeDRiggingProviderReady(provider.id, next)
+    ) {
+      next.rigging.preferredProviderId = provider.id;
+    }
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            <span
+              className={cn(
+                'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                riggingProviderCategoryBadgeClass(provider.category),
+              )}
+            >
+              {riggingProviderCategoryLabel(provider.category, locale)}
+            </span>
+            <StatusBadge
+              state={ready ? 'direct' : 'unavailable'}
+              label={riggingProviderStatusLabel(provider, settings, locale)}
+            />
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-fg-faint">
+            {provider.note}
+          </p>
+          <p className="mt-1 text-[10px] leading-relaxed text-fg-faint">
+            {provider.targets.join(' / ')} · {provider.supportedFormats.map((item) => item.toUpperCase()).join(' / ')}
+          </p>
+        </div>
+        {provider.credentialUrl && (
+          <button
+            type="button"
+            onClick={() => void openExternal(provider.credentialUrl as string)}
+            className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+          >
+            <ExternalLink size={13} strokeWidth={2.2} />
+            {t(locale, 'settings.rigging.openDocs')}
+          </button>
+        )}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        {provider.needsKey && (
+          <label className="block space-y-1">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {provider.keyLabel ?? t(locale, 'settings.models.apiKey')}
+            </span>
+            <div className="relative">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={keyValue}
+                onChange={(event) => patchProvider({ key: event.target.value })}
+                placeholder={
+                  inherited
+                    ? t(locale, 'settings.rigging.inheritedPlaceholder')
+                    : provider.keyPlaceholder ?? 'sk-...'
+                }
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 pr-14 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+              />
+              <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setShowKey((v) => !v)}
+                  title={t(
+                    locale,
+                    showKey ? 'settings.models.hideKey' : 'settings.models.showKey',
+                  )}
+                  className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg"
+                >
+                  <KeyIcon size={13} strokeWidth={2} />
+                </button>
+                {keyValue && (
+                  <button
+                    type="button"
+                    onClick={() => patchProvider({ key: '' })}
+                    title={t(locale, 'settings.models.clear')}
+                    className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-rose-300"
+                  >
+                    <Trash2 size={13} strokeWidth={2} />
+                  </button>
+                )}
+              </div>
+            </div>
+            {inherited && !keyValue && (
+              <p className="text-[10px] leading-relaxed text-emerald-300/90">
+                {t(locale, 'settings.rigging.inheritedHint').replace(
+                  '{source}',
+                  inheritedSourceLabel,
+                )}
+              </p>
+            )}
+          </label>
+        )}
+
+        <label className="block space-y-1 md:col-span-2">
+          <span className="text-[11px] font-medium text-fg-dim">
+            {t(locale, 'settings.freeChannels.modelLabel')}
+          </span>
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(9rem,13rem)]">
+            <input
+              type="text"
+              value={model}
+              onChange={(event) => patchProvider({ model: event.target.value })}
+              placeholder={provider.defaultModel}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+            <select
+              value={provider.models.includes(model) ? model : ''}
+              onChange={(event) => {
+                if (event.target.value) {
+                  patchProvider({ model: event.target.value });
+                }
+              }}
+              className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
+            >
+              <option value="">{t(locale, 'settings.models.selectModel')}</option>
+              {provider.models.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+        </label>
+
+        {provider.supportsBaseUrl && (
+          <label className="block space-y-1 md:col-span-2">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {t(locale, 'settings.models.baseUrl')}
+            </span>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(event) => patchProvider({ baseUrl: event.target.value })}
+              placeholder={
+                threeDRiggingProviderBaseUrl(provider.id, settings) ||
+                provider.endpointPlaceholder
+              }
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        )}
+
+        {provider.supportsCommand && (
+          <label className="block space-y-1 md:col-span-2">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {t(locale, 'settings.rigging.commandLabel')}
+            </span>
+            <input
+              type="text"
+              value={command}
+              onChange={(event) => patchProvider({ command: event.target.value })}
+              placeholder={
+                threeDRiggingProviderCommand(provider.id, settings) ||
+                provider.commandPlaceholder
+              }
               autoComplete="off"
               spellCheck={false}
               className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
@@ -3412,14 +4761,14 @@ function SettingRow({
   children: ReactNode;
 }) {
   return (
-    <div className="grid gap-4 rounded-lg border border-border bg-bg-alt p-4 md:grid-cols-[minmax(0,1fr)_minmax(12rem,24rem)] md:items-center">
+    <div className="grid gap-4 rounded-lg border border-border bg-bg-alt p-4 lg:grid-cols-[minmax(16rem,1fr)_minmax(16rem,32rem)] lg:items-center">
       <div className="space-y-1">
         <div className="text-sm font-medium text-fg">{title}</div>
         {description && (
           <p className="text-xs leading-relaxed text-fg-faint">{description}</p>
         )}
       </div>
-      <div className="md:justify-self-end">{children}</div>
+      <div className="min-w-0 lg:flex lg:w-full lg:justify-end">{children}</div>
     </div>
   );
 }
@@ -3610,7 +4959,7 @@ function FreeChannelsSettings({ locale }: { locale: Locale }) {
           {status.msg}
         </p>
       )}
-      <div className="space-y-2.5">
+      <div className={SETTINGS_PROVIDER_GRID_CLASS}>
         {FREE_CHANNELS.map((channel) => (
           <FreeChannelRow
             key={channel.id}
@@ -4030,6 +5379,795 @@ function FreeChannelRow({
       )}
     </div>
   );
+}
+
+type EditableGameExpertEngine = Exclude<GameExpertEngine, 'auto' | 'custom'>;
+
+interface GameExpertEditorDraft {
+  id: string;
+  name: string;
+  group: string;
+  summary: string;
+  role: string;
+  triggersText: string;
+  guidanceText: string;
+  boundariesText: string;
+  engineAffinity: EditableGameExpertEngine[];
+  defaultRank: number;
+}
+
+const EDITABLE_GAME_EXPERT_ENGINES: EditableGameExpertEngine[] = [
+  'unity',
+  'unreal',
+  'godot',
+  'web',
+];
+
+function splitExpertLines(value: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value.split(/[\n,]+/)) {
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function slugGameExpertId(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'custom-expert'
+  );
+}
+
+function uniqueGameExpertId(base: string, catalog: readonly GameExpertDefinition[]): string {
+  const used = new Set(catalog.map((expert) => expert.id));
+  const slug = slugGameExpertId(base);
+  if (!used.has(slug)) return slug;
+  let index = 2;
+  while (used.has(`${slug}-${index}`)) index += 1;
+  return `${slug}-${index}`;
+}
+
+function expertToDraft(expert: GameExpertDefinition): GameExpertEditorDraft {
+  return {
+    id: expert.id,
+    name: expert.name,
+    group: expert.group,
+    summary: expert.summary,
+    role: expert.role,
+    triggersText: expert.triggers.join('\n'),
+    guidanceText: expert.guidance.join('\n'),
+    boundariesText: expert.boundaries.join('\n'),
+    engineAffinity: [...(expert.engineAffinity ?? [])],
+    defaultRank: expert.defaultRank,
+  };
+}
+
+function newExpertDraft(
+  catalog: readonly GameExpertDefinition[],
+): GameExpertEditorDraft {
+  const id = uniqueGameExpertId('custom-expert', catalog);
+  return {
+    id,
+    name: '',
+    group: 'Custom',
+    summary: '',
+    role: '',
+    triggersText: '',
+    guidanceText: '',
+    boundariesText: '',
+    engineAffinity: [],
+    defaultRank: catalog.length + 1,
+  };
+}
+
+function draftToExpert(draft: GameExpertEditorDraft): GameExpertDefinition | null {
+  const id = slugGameExpertId(draft.id);
+  const name = draft.name.trim();
+  if (!id || !name) return null;
+  return {
+    id,
+    name,
+    group: draft.group.trim() || 'Custom',
+    summary: draft.summary.trim() || name,
+    role: draft.role.trim() || `作为 ${name} 提供游戏开发建议。`,
+    triggers: splitExpertLines(draft.triggersText).length
+      ? splitExpertLines(draft.triggersText)
+      : [name.toLowerCase()],
+    guidance: splitExpertLines(draft.guidanceText).length
+      ? splitExpertLines(draft.guidanceText)
+      : ['给出可执行、可验证的建议'],
+    boundaries: splitExpertLines(draft.boundariesText).length
+      ? splitExpertLines(draft.boundariesText)
+      : ['避免脱离项目目标和实现约束'],
+    engineAffinity: draft.engineAffinity.length
+      ? [...draft.engineAffinity]
+      : undefined,
+    defaultRank: Math.max(1, Math.round(draft.defaultRank || 999)),
+  };
+}
+
+function GameExpertSettingsPanel({
+  locale,
+  settings,
+  setSettings,
+}: {
+  locale: Locale;
+  settings: GameExpertSettingsValues;
+  setSettings: (patch: Partial<GameExpertSettingsValues>) => void;
+}) {
+  const catalog = useMemo(() => getGameExpertCatalog(settings), [settings]);
+  const enabledExpertIds = new Set(settings.enabledExpertIds);
+  const enabledCount = catalog.filter((expert) =>
+    enabledExpertIds.has(expert.id),
+  ).length;
+  // Category tabs derived from expert groups, mirroring the commercial/free
+  // segmented control used by the image/music/3D channel panels. 'all' is a
+  // synthetic sentinel that shows every expert.
+  const groupOrder = useMemo(() => {
+    const seen = new Set<string>();
+    const groups: string[] = [];
+    for (const expert of catalog) {
+      if (!seen.has(expert.group)) {
+        seen.add(expert.group);
+        groups.push(expert.group);
+      }
+    }
+    return groups;
+  }, [catalog]);
+  const [activeGroup, setActiveGroup] = useState<string>('all');
+  // If the active group disappears (e.g. its only expert was deleted), fall back
+  // to 'all' so the grid never renders empty for a stale selection.
+  useEffect(() => {
+    if (activeGroup !== 'all' && !groupOrder.includes(activeGroup)) {
+      setActiveGroup('all');
+    }
+  }, [activeGroup, groupOrder]);
+  const visibleExperts = useMemo(
+    () =>
+      activeGroup === 'all'
+        ? catalog
+        : catalog.filter((expert) => expert.group === activeGroup),
+    [activeGroup, catalog],
+  );
+  const [draft, setDraft] = useState<GameExpertEditorDraft | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<GameExpertDefinition | null>(
+    null,
+  );
+
+  const closeEditor = () => {
+    setDraft(null);
+    setFormError(null);
+  };
+
+  const setExpertEnabled = (id: string, enabled: boolean) => {
+    const next = new Set(settings.enabledExpertIds);
+    if (enabled) next.add(id);
+    else next.delete(id);
+    setSettings({
+      enabledExpertIds: catalog.map((expert) => expert.id).filter((expertId) =>
+        next.has(expertId),
+      ),
+    });
+  };
+
+  const saveDraft = () => {
+    if (!draft) return;
+    const expert = draftToExpert(draft);
+    if (!expert) {
+      setFormError(t(locale, 'settings.gameExperts.editorInvalid'));
+      return;
+    }
+
+    const customExperts = [
+      ...settings.customExperts.filter((item) => item.id !== expert.id),
+      expert,
+    ].sort((a, b) => a.defaultRank - b.defaultRank || a.name.localeCompare(b.name));
+    const deletedExpertIds = settings.deletedExpertIds.filter(
+      (id) => id !== expert.id,
+    );
+    const enabled = new Set(settings.enabledExpertIds);
+    enabled.add(expert.id);
+    const nextCatalog = getGameExpertCatalog({ customExperts, deletedExpertIds });
+    setSettings({
+      customExperts,
+      deletedExpertIds,
+      enabledExpertIds: nextCatalog
+        .map((item) => item.id)
+        .filter((id) => enabled.has(id)),
+    });
+    closeEditor();
+  };
+
+  const deleteExpert = (expert: GameExpertDefinition) => {
+    const isBuiltIn = GAME_EXPERT_IDS.includes(expert.id);
+    const customExperts = settings.customExperts.filter(
+      (item) => item.id !== expert.id,
+    );
+    const deleted = new Set(settings.deletedExpertIds);
+    if (isBuiltIn) deleted.add(expert.id);
+    else deleted.delete(expert.id);
+    const deletedExpertIds = [...deleted].filter(
+      (id) => GAME_EXPERT_IDS.includes(id) || customExperts.some((item) => item.id === id),
+    );
+    const nextCatalog = getGameExpertCatalog({ customExperts, deletedExpertIds });
+    const enabled = new Set(settings.enabledExpertIds);
+    enabled.delete(expert.id);
+    setSettings({
+      customExperts,
+      deletedExpertIds,
+      enabledExpertIds: nextCatalog
+        .map((item) => item.id)
+        .filter((id) => enabled.has(id)),
+    });
+    setDeleteTarget(null);
+    if (draft?.id === expert.id) closeEditor();
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-lg font-semibold text-fg">
+          {t(locale, 'settings.gameExperts.title')}
+        </h3>
+        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+          {t(locale, 'settings.gameExperts.description')}
+        </p>
+      </div>
+
+      <SettingRow
+        title={t(locale, 'settings.gameExperts.enabledLabel')}
+        description={t(locale, 'settings.gameExperts.enabledDesc')}
+      >
+        <SwitchControl
+          checked={settings.enabled}
+          onChange={(enabled) => setSettings({ enabled })}
+        />
+      </SettingRow>
+
+      <SettingRow
+        title={t(locale, 'settings.gameExperts.engineLabel')}
+        description={t(locale, 'settings.gameExperts.engineDesc')}
+      >
+        <div className="w-full min-w-[14rem]">
+          <SelectControl
+            value={settings.engine}
+            options={gameExpertEngineOptions(locale)}
+            onChange={(engine) => setSettings({ engine })}
+            icon={<Gamepad2 size={15} strokeWidth={2.1} />}
+          />
+        </div>
+      </SettingRow>
+
+      <SettingRow
+        title={t(locale, 'settings.gameExperts.modeLabel')}
+        description={t(locale, 'settings.gameExperts.modeDesc')}
+      >
+        <div className="w-full min-w-[14rem]">
+          <SelectControl
+            value={settings.mode}
+            options={gameExpertModeOptions(locale)}
+            onChange={(mode) => setSettings({ mode })}
+            icon={<Cpu size={15} strokeWidth={2.1} />}
+          />
+        </div>
+      </SettingRow>
+
+      <SettingRow
+        title={t(locale, 'settings.gameExperts.maxExpertsLabel')}
+        description={t(locale, 'settings.gameExperts.maxExpertsDesc')}
+      >
+        <StepperControl
+          value={settings.maxExperts}
+          min={GAME_EXPERT_LIMITS.maxExperts.min}
+          max={GAME_EXPERT_LIMITS.maxExperts.max}
+          onChange={(maxExperts) => setSettings({ maxExperts })}
+        />
+      </SettingRow>
+
+      <section className="rounded-lg border border-border bg-bg-alt p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h4 className="text-sm font-semibold text-fg">
+              {t(locale, 'settings.gameExperts.poolTitle')}
+            </h4>
+            <p className="text-xs leading-relaxed text-fg-faint">
+              {t(locale, 'settings.gameExperts.poolDesc')}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <StatusBadge
+              state="default"
+              label={formatStatusMessage(
+                t(locale, 'settings.gameExperts.enabledCount'),
+                { n: enabledCount, total: catalog.length },
+              )}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(newExpertDraft(catalog));
+                setFormError(null);
+              }}
+              className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/15 px-2 py-1 text-[11px] text-accent transition-colors hover:bg-accent/20"
+            >
+              <Plus size={12} strokeWidth={2.2} />
+              {t(locale, 'settings.gameExperts.newExpert')}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setSettings({
+                  enabledExpertIds: catalog.map((expert) => expert.id),
+                })
+              }
+              className="rounded border border-border bg-panel px-2 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg"
+            >
+              {t(locale, 'settings.gameExperts.selectAll')}
+            </button>
+          </div>
+        </div>
+
+        <div
+          role="tablist"
+          aria-orientation="horizontal"
+          className="mb-3 flex flex-wrap gap-1.5"
+        >
+          {['all', ...groupOrder].map((group) => {
+            const active = activeGroup === group;
+            const label =
+              group === 'all'
+                ? t(locale, 'settings.gameExperts.categoryAll')
+                : localizedGameGroupLabel(group, locale);
+            const count =
+              group === 'all'
+                ? catalog.length
+                : catalog.filter((expert) => expert.group === group).length;
+            return (
+              <button
+                key={group}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveGroup(group)}
+                className={cn(
+                  'rounded-md border px-2.5 py-1 text-[11px] font-semibold outline-none transition-colors focus-visible:ring-1 focus-visible:ring-accent',
+                  active
+                    ? 'border-accent bg-accent text-bg'
+                    : 'border-border bg-panel text-fg-faint hover:border-accent hover:text-fg',
+                )}
+              >
+                {label}
+                <span
+                  className={cn(
+                    'ml-1.5 tabular-nums',
+                    active ? 'text-bg/70' : 'text-fg-faint/70',
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          {visibleExperts.map((expert) => {
+            const checked = enabledExpertIds.has(expert.id);
+            const isCustom = settings.customExperts.some(
+              (item) => item.id === expert.id,
+            );
+            return (
+              <div
+                key={expert.id}
+                className={cn(
+                  'min-h-[5.75rem] rounded-md border p-3 text-left transition-colors',
+                  checked
+                    ? 'border-accent bg-accent/10 text-fg'
+                    : 'border-border bg-panel text-fg-dim hover:border-accent hover:text-fg',
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <button
+                    type="button"
+                    aria-pressed={checked}
+                    onClick={() => setExpertEnabled(expert.id, !checked)}
+                    className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                  >
+                    <span
+                      className={cn(
+                        'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border',
+                        checked
+                          ? 'border-accent bg-accent text-bg'
+                          : 'border-border bg-bg text-transparent',
+                      )}
+                    >
+                      <Check size={13} strokeWidth={2.4} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold">
+                        {isCustom
+                          ? expert.name
+                          : localizedGameExpertName(expert, locale)}
+                      </span>
+                      <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] uppercase text-fg-faint">
+                        <span>
+                          {isCustom
+                            ? expert.group
+                            : localizedGameExpertGroup(expert, locale)}
+                        </span>
+                        {isCustom && (
+                          <span className="rounded border border-accent/30 px-1.5 py-0.5 normal-case text-accent">
+                            {t(locale, 'settings.gameExperts.customBadge')}
+                          </span>
+                        )}
+                      </span>
+                      <span className="mt-1 block text-xs leading-relaxed text-fg-faint">
+                        {expert.summary}
+                      </span>
+                    </span>
+                  </button>
+                  <div className="flex shrink-0 gap-1">
+                    <button
+                      type="button"
+                      title={t(locale, 'settings.gameExperts.edit')}
+                      aria-label={t(locale, 'settings.gameExperts.edit')}
+                      onClick={() => {
+                        setDraft(expertToDraft(expert));
+                        setFormError(null);
+                      }}
+                      className="flex h-7 w-7 items-center justify-center rounded border border-border bg-bg text-fg-faint transition-colors hover:border-accent hover:text-fg"
+                    >
+                      <Pencil size={13} strokeWidth={2.2} />
+                    </button>
+                    <button
+                      type="button"
+                      title={t(locale, 'settings.gameExperts.delete')}
+                      aria-label={t(locale, 'settings.gameExperts.delete')}
+                      onClick={() => setDeleteTarget(expert)}
+                      className="flex h-7 w-7 items-center justify-center rounded border border-border bg-bg text-fg-faint transition-colors hover:border-[#f78b8b] hover:text-[#f78b8b]"
+                    >
+                      <Trash2 size={13} strokeWidth={2.2} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {draft && (
+        <GameExpertEditor
+          locale={locale}
+          draft={draft}
+          error={formError}
+          onChange={(next) => {
+            setDraft(next);
+            setFormError(null);
+          }}
+          onCancel={closeEditor}
+          onSave={saveDraft}
+        />
+      )}
+
+      {deleteTarget && (
+        <GameExpertDeleteDialog
+          locale={locale}
+          expert={deleteTarget}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => deleteExpert(deleteTarget)}
+        />
+      )}
+    </div>
+  );
+}
+
+function GameExpertEditor({
+  locale,
+  draft,
+  error,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  locale: Locale;
+  draft: GameExpertEditorDraft;
+  error: string | null;
+  onChange: (draft: GameExpertEditorDraft) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const update = <K extends keyof GameExpertEditorDraft>(
+    key: K,
+    value: GameExpertEditorDraft[K],
+  ) => onChange({ ...draft, [key]: value });
+  const textInputClass =
+    'w-full rounded-md border border-border bg-panel px-2.5 py-1.5 text-sm text-fg outline-none transition-colors focus:border-accent';
+  const areaClass =
+    'min-h-[4.5rem] w-full resize-y rounded-md border border-border bg-panel px-2.5 py-1.5 text-sm text-fg outline-none transition-colors focus:border-accent';
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] bg-black/60 sm:flex sm:items-center sm:justify-center sm:p-6"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="game-expert-editor-title"
+        data-game-expert-editor="true"
+        data-settings-child-modal="true"
+        className="fixed inset-x-0 bottom-0 flex max-h-[calc(100vh-1rem)] flex-col overflow-hidden rounded-t-lg border border-border bg-panel shadow-2xl sm:relative sm:inset-auto sm:max-h-[calc(100vh-3rem)] sm:w-[min(760px,calc(100vw-2rem))] sm:rounded-lg"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="shrink-0 border-b border-border-soft bg-bg-alt px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <h5
+                id="game-expert-editor-title"
+                className="text-base font-semibold text-fg"
+              >
+                {t(locale, 'settings.gameExperts.editorTitle')}
+              </h5>
+              <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+                {draft.name || t(locale, 'settings.gameExperts.newExpert')}
+              </p>
+            </div>
+            <button
+              type="button"
+              title={t(locale, 'common.close')}
+              aria-label={t(locale, 'common.close')}
+              onClick={onCancel}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-faint transition-colors hover:border-accent hover:text-fg"
+            >
+              <X size={15} strokeWidth={2.2} />
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1 text-xs text-fg-faint">
+              <span>{t(locale, 'settings.gameExperts.editorId')}</span>
+              <input
+                type="text"
+                value={draft.id}
+                readOnly
+                className={cn(textInputClass, 'font-mono text-xs text-fg-faint')}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-fg-faint">
+              <span>{t(locale, 'settings.gameExperts.editorName')}</span>
+              <input
+                type="text"
+                value={draft.name}
+                onChange={(event) => update('name', event.target.value)}
+                className={textInputClass}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-fg-faint">
+              <span>{t(locale, 'settings.gameExperts.editorGroup')}</span>
+              <input
+                type="text"
+                value={draft.group}
+                onChange={(event) => update('group', event.target.value)}
+                className={textInputClass}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-fg-faint">
+              <span>{t(locale, 'settings.gameExperts.editorSummary')}</span>
+              <input
+                type="text"
+                value={draft.summary}
+                onChange={(event) => update('summary', event.target.value)}
+                className={textInputClass}
+              />
+            </label>
+          </div>
+
+          <div className="mt-3 grid gap-3">
+            <label className="space-y-1 text-xs text-fg-faint">
+              <span>{t(locale, 'settings.gameExperts.editorRole')}</span>
+              <textarea
+                value={draft.role}
+                onChange={(event) => update('role', event.target.value)}
+                className={areaClass}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-fg-faint">
+              <span>{t(locale, 'settings.gameExperts.editorTriggers')}</span>
+              <textarea
+                value={draft.triggersText}
+                onChange={(event) => update('triggersText', event.target.value)}
+                className={areaClass}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-fg-faint">
+              <span>{t(locale, 'settings.gameExperts.editorGuidance')}</span>
+              <textarea
+                value={draft.guidanceText}
+                onChange={(event) => update('guidanceText', event.target.value)}
+                className={areaClass}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-fg-faint">
+              <span>{t(locale, 'settings.gameExperts.editorBoundaries')}</span>
+              <textarea
+                value={draft.boundariesText}
+                onChange={(event) => update('boundariesText', event.target.value)}
+                className={areaClass}
+              />
+            </label>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            <span className="text-xs text-fg-faint">
+              {t(locale, 'settings.gameExperts.editorAffinity')}
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {EDITABLE_GAME_EXPERT_ENGINES.map((engine) => {
+                const active = draft.engineAffinity.includes(engine);
+                return (
+                  <button
+                    key={engine}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => {
+                      const next = active
+                        ? draft.engineAffinity.filter((item) => item !== engine)
+                        : [...draft.engineAffinity, engine];
+                      update('engineAffinity', next);
+                    }}
+                    className={cn(
+                      'rounded border px-2 py-1 text-[11px] transition-colors',
+                      active
+                        ? 'border-accent bg-accent/15 text-fg'
+                        : 'border-border bg-panel text-fg-faint hover:border-accent hover:text-fg',
+                    )}
+                  >
+                    {engine === 'web'
+                      ? 'Web'
+                      : engine[0].toUpperCase() + engine.slice(1)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {error && <p className="mt-3 text-xs text-[#f78b8b]">{error}</p>}
+        </div>
+
+        <div className="shrink-0 border-t border-border-soft bg-bg-alt px-5 py-3">
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded border border-border bg-panel px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+            >
+              {t(locale, 'common.cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              className="rounded border border-accent bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
+            >
+              {t(locale, 'common.save')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GameExpertDeleteDialog({
+  locale,
+  expert,
+  onCancel,
+  onConfirm,
+}: {
+  locale: Locale;
+  expert: GameExpertDefinition;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[70] bg-black/60 sm:flex sm:items-center sm:justify-center sm:p-6"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="game-expert-delete-title"
+        data-game-expert-delete="true"
+        data-settings-child-modal="true"
+        className="fixed inset-x-0 bottom-0 overflow-hidden rounded-t-lg border border-border bg-panel shadow-2xl sm:relative sm:inset-auto sm:w-[min(440px,calc(100vw-2rem))] sm:rounded-lg"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="border-b border-border-soft bg-bg-alt px-5 py-4">
+          <h5
+            id="game-expert-delete-title"
+            className="text-base font-semibold text-fg"
+          >
+            {t(locale, 'settings.gameExperts.delete')}
+          </h5>
+          <p className="mt-2 text-sm leading-relaxed text-fg-dim">
+            {formatStatusMessage(t(locale, 'settings.gameExperts.deleteConfirm'), {
+              name: localizedGameExpertName(expert, locale),
+            })}
+          </p>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2 px-5 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded border border-border bg-panel-2 px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+          >
+            {t(locale, 'common.cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded border border-[#f78b8b]/60 bg-[#f78b8b]/15 px-3 py-1.5 text-xs font-medium text-[#f78b8b] transition-colors hover:bg-[#f78b8b]/20"
+          >
+            {t(locale, 'common.delete')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function gameExpertEngineOptions(
+  locale: Locale,
+): Array<{ id: GameExpertEngine; label: string; hint?: string }> {
+  return [
+    {
+      id: 'auto',
+      label: t(locale, 'settings.gameExperts.engineAuto'),
+      hint: 'auto',
+    },
+    { id: 'unity', label: 'Unity', hint: 'C#' },
+    { id: 'unreal', label: 'Unreal', hint: 'UE' },
+    { id: 'godot', label: 'Godot', hint: 'GDScript' },
+    { id: 'web', label: t(locale, 'settings.gameExperts.engineWeb'), hint: 'web' },
+    {
+      id: 'custom',
+      label: t(locale, 'settings.gameExperts.engineCustom'),
+      hint: 'custom',
+    },
+  ];
+}
+
+function gameExpertModeOptions(
+  locale: Locale,
+): Array<{ id: GameExpertMode; label: string; hint?: string }> {
+  return [
+    {
+      id: 'light',
+      label: t(locale, 'settings.gameExperts.modeLight'),
+      hint: 'short',
+    },
+    {
+      id: 'standard',
+      label: t(locale, 'settings.gameExperts.modeStandard'),
+      hint: '3x',
+    },
+    {
+      id: 'council',
+      label: t(locale, 'settings.gameExperts.modeCouncil'),
+      hint: 'deep',
+    },
+  ];
 }
 
 function ConsensusSettings({ locale }: { locale: Locale }) {

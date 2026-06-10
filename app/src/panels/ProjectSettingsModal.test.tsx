@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ProjectSettingsModal from './ProjectSettingsModal';
 import { DEFAULT_GAME_EXPERT_SETTINGS } from '@/lib/gameExperts';
 import {
+  probeProjectLspServer,
   scanProjectEnvironment,
+  tauriAvailable,
   type ProjectEnvironmentScan,
 } from '@/lib/tauri';
 import type { WorkspaceSummary } from '@/store/history/types';
@@ -17,7 +19,10 @@ vi.mock('@/lib/tauri', async () => {
   return {
     ...actual,
     openLocalPath: vi.fn(),
+    openExternal: vi.fn(),
     probeProjectMcpServer: vi.fn(),
+    probeProjectLspServer: vi.fn(),
+    tauriAvailable: vi.fn(() => false),
     scanProjectEnvironment: vi.fn(),
   };
 });
@@ -77,6 +82,7 @@ async function renderProjectSettingsModal(
   container: HTMLDivElement;
   cleanup: () => Promise<void>;
 }> {
+  vi.mocked(tauriAvailable).mockReturnValue(false);
   vi.mocked(scanProjectEnvironment).mockResolvedValue(scan);
   useStore.setState({
     gameExpertSettings: DEFAULT_GAME_EXPERT_SETTINGS,
@@ -124,6 +130,7 @@ describe('ProjectSettingsModal game project tabs', () => {
         '游戏专家',
         '命令',
         'MCP配置',
+        'LSP',
         'Skill',
         '权限/自动化',
       ]);
@@ -144,6 +151,7 @@ describe('ProjectSettingsModal game project tabs', () => {
       expect(tabText).toEqual([
         '概览',
         'MCP配置',
+        'LSP',
         'Skill',
         '权限/自动化',
       ]);
@@ -176,6 +184,62 @@ describe('ProjectSettingsModal game project tabs', () => {
         '/mesh-mode-start',
         '/mesh-mode-end',
       ]);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('renders recommended LSP servers under the LSP tab', async () => {
+    const view = await renderProjectSettingsModal();
+
+    try {
+      const lspTab = Array.from(
+        view.container.querySelectorAll('nav [role="tab"]'),
+      ).find((tab) => tab.textContent?.trim() === 'LSP');
+
+      await act(async () => {
+        (lspTab as HTMLButtonElement).click();
+      });
+
+      expect(view.container.textContent).toContain('clangd');
+      expect(view.container.textContent).toContain('推荐');
+      expect(view.container.textContent).toContain('一键安装');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('auto-detects available recommended LSP commands without enabling them', async () => {
+    const view = await renderProjectSettingsModal();
+
+    try {
+      vi.mocked(tauriAvailable).mockReturnValue(true);
+      vi.mocked(probeProjectLspServer).mockResolvedValue({
+        serverId: 'clangd',
+        ok: true,
+        status: 'available',
+        message: '命令可用：C:\\Program Files\\LLVM\\bin\\clangd.exe',
+        resolvedCommand: 'C:\\Program Files\\LLVM\\bin\\clangd.exe',
+        checkedAtMs: 1,
+      });
+
+      const lspTab = Array.from(
+        view.container.querySelectorAll('nav [role="tab"]'),
+      ).find((tab) => tab.textContent?.trim() === 'LSP');
+
+      await act(async () => {
+        (lspTab as HTMLButtonElement).click();
+      });
+      await settle();
+
+      expect(probeProjectLspServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'clangd',
+          command: 'clangd',
+        }),
+      );
+      expect(view.container.textContent).toContain('命令可用');
+      expect(view.container.textContent).toContain('已安装');
     } finally {
       await view.cleanup();
     }

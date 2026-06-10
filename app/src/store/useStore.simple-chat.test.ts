@@ -795,7 +795,7 @@ describe('simple-workflow chat mode', () => {
     expect(assistant?.text).toContain('这是直接的回答。');
   });
 
-  it('skips app personal instructions for Codex simple chat prompts', async () => {
+  it('injects app personal instructions for Codex simple chat prompts', async () => {
     const workflow = simpleBlueprint('Simple chat');
     workflow.meta.gateway = {
       defaults: { adapter: 'codex', modelClass: 'default' },
@@ -832,8 +832,8 @@ describe('simple-workflow chat mode', () => {
     );
 
     expect(systems[0]).toContain('简单 Workflow');
-    expect(systems[0]).not.toContain('【用户个人默认指令（低优先级）】');
-    expect(systems[0]).not.toContain('- 默认使用中文');
+    expect(systems[0]).toContain('【用户个人默认指令（低优先级）】');
+    expect(systems[0]).toContain('- 默认使用中文');
   });
 
   it('injects game experts into simple chat only when explicitly forced', async () => {
@@ -1670,6 +1670,97 @@ describe('simple-workflow chat mode', () => {
         .messages.find((m) => m.role === 'assistant')
         ?.text,
     ).toContain('⚙ 路由：Kilo Gateway · 模型：poolside/laguna-xs.2:free');
+  });
+
+  it('uses CLI and injects global MCP guidance for any active model when the workspace has MCP', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    useStore.setState({
+      activeWorkspaceId: 'ws-game',
+      workspaces: [
+        {
+          id: 'ws-game',
+          path: 'E:\\project\\Game',
+          name: 'Game',
+          updatedAt: Date.now(),
+          sessionCount: 0,
+          metadata: {
+            projectSettings: {
+              schemaVersion: 1,
+              mcp: {
+                enabled: true,
+                servers: [
+                  {
+                    id: 'ue-mcp-for-all-versions',
+                    label: 'Unreal MCP (全版本)',
+                    source: 'suggested',
+                    enabled: true,
+                    transport: 'stdio',
+                    command: 'C:\\tools\\ue-mcp.exe',
+                    args: [],
+                    env: {},
+                    lastProbe: {
+                      serverId: 'ue-mcp-for-all-versions',
+                      ok: true,
+                      status: 'connected',
+                      message: 'MCP 已连接，发现 48 个工具。',
+                      toolsCount: 48,
+                      checkedAtMs: Date.now(),
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    });
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue({
+      selection: { adapter: 'gemini', modelClass: 'gemini-2.5-pro' },
+      adapter: 'gemini',
+      modelClass: 'default',
+      model: 'gemini-2.5-pro',
+      providerName: 'Google',
+      channelName: 'Gemini Pro',
+      transport: 'openai-compatible',
+      mode: 'direct',
+      apiKey: 'test-key',
+      label: 'Google Gemini',
+      source: 'global',
+    });
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'gemini', modelClass: 'gemini-2.5-pro' },
+      adapter: 'gemini',
+      modelClass: 'default',
+      model: 'gemini-2.5-pro',
+      providerName: 'Google',
+      channelName: 'Gemini Pro',
+      transport: 'openai-compatible',
+      mode: 'direct',
+      label: 'Google Gemini',
+      source: 'global',
+      cliCommand: 'gemini',
+      env: {
+        GEMINI_API_KEY: 'test-key',
+        GOOGLE_GEMINI_BASE_URL: 'https://generativelanguage.googleapis.com',
+      },
+    });
+    tauriMocks.aiEditViaCli.mockResolvedValue('已读取 UE 状态。');
+
+    useStore.getState().sendPrompt('当前 UE 编辑器里水体渲染状态帮我看一下');
+
+    await waitFor(
+      () => tauriMocks.aiEditViaCli.mock.calls.length === 1,
+      'project MCP CLI chat call',
+    );
+    expect(gatewayMocks.completeGatewayText).not.toHaveBeenCalled();
+    expect(tauriMocks.aiEditViaCli.mock.calls[0]?.[1]).toBe('gemini');
+    const prompt = String(tauriMocks.aiEditViaCli.mock.calls[0]?.[0] ?? '');
+    expect(prompt).toContain('【全局 MCP】');
+    expect(prompt).toContain('所有模型请求都应优先使用这些实时工具');
+    expect(prompt).toContain('ue-mcp-for-all-versions');
+    expect(prompt).toContain('优先使用 Unreal MCP 工具读取编辑器实时状态');
   });
 
   it('shows the route and strips route/tool logs from the next transcript', async () => {

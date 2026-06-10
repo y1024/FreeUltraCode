@@ -147,6 +147,16 @@ fn common_path_dirs() -> Vec<PathBuf> {
             if let Some(appdata) = std::env::var_os("APPDATA") {
                 push_path_dir(&mut out, &mut seen, PathBuf::from(appdata).join("npm"));
             }
+            if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+                push_path_dir(
+                    &mut out,
+                    &mut seen,
+                    PathBuf::from(local_appdata)
+                        .join("Programs")
+                        .join("LLVM")
+                        .join("bin"),
+                );
+            }
             push_path_dir(&mut out, &mut seen, home.join(".cargo").join("bin"));
             push_path_dir(&mut out, &mut seen, home.join(".bun").join("bin"));
         }
@@ -160,6 +170,19 @@ fn common_path_dirs() -> Vec<PathBuf> {
             push_path_dir(&mut out, &mut seen, home.join(".npm-global").join("bin"));
             push_path_dir(&mut out, &mut seen, home.join(".volta").join("bin"));
             push_path_dir(&mut out, &mut seen, home.join("Library").join("pnpm"));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        for var in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Some(root) = std::env::var_os(var) {
+                push_path_dir(
+                    &mut out,
+                    &mut seen,
+                    PathBuf::from(root).join("LLVM").join("bin"),
+                );
+            }
         }
     }
 

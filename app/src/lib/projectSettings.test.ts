@@ -35,6 +35,10 @@ describe('project settings game features', () => {
       gameExperts: false,
       gameExpertEngine: 'auto',
     });
+    expect(emptyProjectSettings().lsp).toEqual({
+      enabled: true,
+      servers: [],
+    });
     expect(gameFeatureDefaultsForEngine('unknown')).toEqual(
       emptyProjectSettings().gameFeatures,
     );
@@ -111,5 +115,48 @@ describe('project settings game features', () => {
       gameExperts: true,
       gameExpertEngine: 'unreal',
     });
+  });
+
+  it('normalizes persisted LSP settings', () => {
+    const settings = projectSettingsFromMetadata({
+      projectSettings: {
+        lsp: {
+          enabled: true,
+          servers: [
+            {
+              id: 'clangd',
+              enabled: true,
+              command: 'clangd',
+              args: ['--background-index'],
+              lastProbe: {
+                serverId: 'clangd',
+                ok: true,
+                status: 'available',
+                message: 'ok',
+                checkedAtMs: 1,
+              },
+            },
+            { id: '', enabled: true },
+          ],
+        },
+      },
+    });
+
+    expect(settings.lsp.servers).toEqual([
+      {
+        id: 'clangd',
+        enabled: true,
+        source: 'catalog',
+        command: 'clangd',
+        args: ['--background-index'],
+        lastProbe: {
+          serverId: 'clangd',
+          ok: true,
+          status: 'available',
+          message: 'ok',
+          checkedAtMs: 1,
+        },
+      },
+    ]);
   });
 });

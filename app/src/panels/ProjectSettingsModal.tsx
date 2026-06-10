@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type ReactNode,
@@ -12,9 +13,11 @@ import {
   Check,
   Copy,
   Download,
+  ExternalLink,
   FileText,
   Gamepad2,
   Info,
+  Languages,
   Plus,
   RefreshCw,
   Rocket,
@@ -37,9 +40,23 @@ import {
   projectSettingsPatch,
   isGameProjectEngine,
   settingsWithDetectedGameFeatures,
+  type ProjectLspServerConfig,
   type ProjectMcpServerConfig,
   type ProjectSettings,
 } from '@/lib/projectSettings';
+import {
+  fallbackLanguageScanForEngine,
+  installCommandText,
+  lspServerById,
+  PROJECT_LANGUAGE_LABELS,
+  rankLspServers,
+  recommendedLspServerIds,
+  shouldSkipLanguageScanDirectory,
+  detectProjectLanguagesFromPaths,
+  type LspServerDefinition,
+  type ProjectLanguageScan,
+  type RankedLspServerDefinition,
+} from '@/lib/lspCatalog';
 import {
   GAME_PROJECT_COMMAND_NAMES,
   buildSlashSuggestions,
@@ -51,7 +68,11 @@ import {
   saveThreeDGenerationSettings,
 } from '@/lib/threeDGeneration';
 import {
+  listWorkspaceDirectory,
+  installProjectLspServer,
+  openExternal,
   openLocalPath,
+  probeProjectLspServer,
   probeProjectMcpServer,
   scanProjectEnvironment,
   ueMcpEnsureBinary,
@@ -59,6 +80,8 @@ import {
   tauriAvailable,
   UE_MCP_SERVER_ID,
   type ProjectEnvironmentScan,
+  type ProjectLspInstallResult,
+  type ProjectLspProbeResult,
   type ProjectMcpProbeResult,
   type UeMcpSetupResult,
 } from '@/lib/tauri';
@@ -78,6 +101,7 @@ type ProjectSettingsTab =
   | 'gameExperts'
   | 'commands'
   | 'mcp'
+  | 'lsp'
   | 'skills'
   | 'automation';
 
@@ -88,6 +112,7 @@ const tabs: { id: ProjectSettingsTab; label: string; Icon: LucideIcon }[] = [
   { id: 'gameExperts', label: '游戏专家', Icon: Gamepad2 },
   { id: 'commands', label: '命令', Icon: SlashSquare },
   { id: 'mcp', label: 'MCP配置', Icon: Terminal },
+  { id: 'lsp', label: 'LSP', Icon: Languages },
   { id: 'skills', label: 'Skill', Icon: Box },
   { id: 'automation', label: '权限/自动化', Icon: SlidersHorizontal },
 ];
@@ -166,6 +191,57 @@ const GAME_FEATURE_TABS: ReadonlySet<ProjectSettingsTab> = new Set([
 
 function fieldId(prefix: string, id: string): string {
   return `${prefix}-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+async function scanWorkspaceLanguages(
+  rootPath: string,
+  scan: ProjectEnvironmentScan | null,
+): Promise<ProjectLanguageScan> {
+  const queue: Array<{ relativePath: string; depth: number }> = [
+    { relativePath: '', depth: 0 },
+  ];
+  const paths: string[] = [];
+  let directoriesScanned = 0;
+  let truncated = false;
+  const maxDirectories = 180;
+  const maxFiles = 6000;
+  const maxDepth = 7;
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (directoriesScanned >= maxDirectories || paths.length >= maxFiles) {
+      truncated = true;
+      break;
+    }
+    directoriesScanned += 1;
+    const listing = await listWorkspaceDirectory(rootPath, current.relativePath);
+    truncated ||= listing.truncated;
+    for (const entry of listing.entries) {
+      if (entry.kind === 'file') {
+        paths.push(entry.relativePath || entry.name);
+        if (paths.length >= maxFiles) {
+          truncated = true;
+          break;
+        }
+        continue;
+      }
+      if (entry.kind !== 'directory' || current.depth >= maxDepth) continue;
+      if (shouldSkipLanguageScanDirectory(entry.name)) continue;
+      queue.push({
+        relativePath: entry.relativePath,
+        depth: current.depth + 1,
+      });
+    }
+  }
+
+  return {
+    scannedAtMs: Date.now(),
+    languages: detectProjectLanguagesFromPaths(paths, scan?.engine.engine),
+    filesScanned: paths.length,
+    directoriesScanned,
+    truncated,
+    source: 'workspace',
+  };
 }
 
 function SettingsRow({
@@ -357,6 +433,29 @@ function ProbeBadge({ result }: { result?: ProjectMcpProbeResult }) {
   );
 }
 
+function LspProbeBadge({ result }: { result?: ProjectLspProbeResult }) {
+  if (!result) {
+    return (
+      <span className="rounded border border-border-soft bg-bg-alt px-2 py-0.5 text-[11px] text-fg-faint">
+        未检测
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn(
+        'rounded border px-2 py-0.5 text-[11px]',
+        result.ok
+          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+          : 'border-red-500/40 bg-red-500/10 text-red-300',
+      )}
+      title={result.message}
+    >
+      {result.ok ? '命令可用' : '未找到'}
+    </span>
+  );
+}
+
 function UnrealMcpQuickSetup({
   busy,
   step,
@@ -373,13 +472,20 @@ function UnrealMcpQuickSetup({
   onOpenFile: (path: string) => void;
 }) {
   const desktop = tauriAvailable();
-  const restartNeeded =
-    !!result?.ok &&
-    (result.changed ||
-      result.configuredPlugins.length > 0 ||
-      result.changedFiles.some((file) =>
-        /defaultengine\.ini|remotecontrol\.ini|\.uproject$/i.test(file),
-      ));
+  const restartNeeded = !!result?.ok && result.restartRequired === true;
+  const ueConfigChanged =
+    result?.changedFiles.some(
+      (file) =>
+        file.endsWith('.uproject') ||
+        file.endsWith('Config/DefaultEngine.ini') ||
+        file.endsWith('Config/DefaultRemoteControl.ini'),
+    ) ?? false;
+  const restartNotice = !!result?.ok && (restartNeeded || ueConfigChanged);
+  const visibleWarnings =
+    result?.warnings.filter(
+      (warning) =>
+        !restartNotice || !warning.includes('必须重启 Unreal Editor'),
+    ) ?? [];
   return (
     <section className="grid gap-3 rounded-md border border-accent/40 bg-accent/5 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -391,8 +497,8 @@ function UnrealMcpQuickSetup({
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-fg-faint">
             自动下载并校验版本无关的 Unreal MCP 服务（支持 UE 4.25–5.8），在 .uproject
             中启用 RemoteControl / EditorScripting / Python 插件，写入 RemoteControl
-            随编辑器自启动的配置，并合并项目 .mcp.json、登记到本项目的 MCP
-            列表。全程无需手动操作。
+            自启动、远程 Python 执行和控制台命令权限，并合并项目 .mcp.json、登记到本项目的
+            MCP 列表。全程无需手动操作。
           </p>
         </div>
         <button
@@ -462,12 +568,14 @@ function UnrealMcpQuickSetup({
               </ul>
             </div>
           ) : null}
-          {restartNeeded ? (
+          {restartNotice ? (
             <div className="mt-1 flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-amber-300">
               <TriangleAlert size={13} className="mt-0.5 shrink-0" />
               <span>
-                插件或 RemoteControl 设置已变更，请重启 Unreal Editor 使其生效。MCP
-                服务支持懒连接，可先于编辑器启动，无需手动重启 CLI。
+                {restartNeeded
+                  ? '已检测到 Unreal Editor 正在运行或启动中；插件或 RemoteControl / Python 权限配置已变更，必须重启 Unreal Editor 后生效。'
+                  : '插件或 RemoteControl / Python 权限配置已写入；如果 Unreal Editor 已经打开，请重启后生效，未打开则下次启动自动生效。'}
+                MCP 服务支持懒连接，无需手动重启 CLI。
               </span>
             </div>
           ) : null}
@@ -476,9 +584,9 @@ function UnrealMcpQuickSetup({
               说明：{result.notes.join('；')}
             </div>
           ) : null}
-          {result.warnings.length > 0 ? (
+          {visibleWarnings.length > 0 ? (
             <div className="text-amber-300/90">
-              提示：{result.warnings.join('；')}
+              提示：{visibleWarnings.join('；')}
             </div>
           ) : null}
         </div>
@@ -504,8 +612,24 @@ export default function ProjectSettingsModal({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [probing, setProbing] = useState(false);
+  const [lspProbing, setLspProbing] = useState(false);
+  const [lspInstallingId, setLspInstallingId] = useState<string | null>(null);
+  const [lspInstallResults, setLspInstallResults] = useState<
+    Record<string, ProjectLspInstallResult>
+  >({});
+  const [lspAvailabilityProbes, setLspAvailabilityProbes] = useState<
+    Record<string, ProjectLspProbeResult>
+  >({});
+  const [lspAvailabilityProbingIds, setLspAvailabilityProbingIds] = useState<string[]>(
+    [],
+  );
+  const lspAvailabilityProbingRef = useRef<Set<string>>(new Set());
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [lspQuery, setLspQuery] = useState('');
+  const [languageScan, setLanguageScan] = useState<ProjectLanguageScan>(() =>
+    fallbackLanguageScanForEngine(projectSettingsFromMetadata(workspace.metadata).engine),
+  );
   const [ueSetupBusy, setUeSetupBusy] = useState(false);
   const [ueSetupStep, setUeSetupStep] = useState<string | null>(null);
   const [ueSetupResult, setUeSetupResult] = useState<UeMcpSetupResult | null>(null);
@@ -528,6 +652,18 @@ export default function ProjectSettingsModal({
     () =>
       tabs.filter((item) => !GAME_FEATURE_TABS.has(item.id) || showGameFeatures),
     [showGameFeatures],
+  );
+  const rankedLspServers = useMemo(
+    () => rankLspServers(languageScan.languages, lspQuery),
+    [languageScan.languages, lspQuery],
+  );
+  const recommendedLspIds = useMemo(
+    () => new Set(recommendedLspServerIds(languageScan.languages)),
+    [languageScan.languages],
+  );
+  const configuredLspById = useMemo(
+    () => new Map(settings.lsp.servers.map((server) => [server.id, server])),
+    [settings.lsp.servers],
   );
 
   const updateMcp = useCallback(
@@ -579,6 +715,17 @@ export default function ProjectSettingsModal({
     [],
   );
 
+  const updateLsp = useCallback(
+    (patch: Partial<ProjectSettings['lsp']>) => {
+      setSettings((current) => ({
+        ...current,
+        lsp: { ...current.lsp, ...patch },
+      }));
+      setDirty(true);
+    },
+    [],
+  );
+
   const updateServer = useCallback(
     (serverId: string, patch: Partial<ProjectMcpServerConfig>) => {
       setSettings((current) => ({
@@ -608,8 +755,25 @@ export default function ProjectSettingsModal({
       if ((latestRecord?.path || workspace.path || '').trim()) {
         nextScan = await scanProjectEnvironment(latestRecord?.path || workspace.path);
         setScan(nextScan);
+        if (tauriAvailable()) {
+          try {
+            const nextLanguageScan = await scanWorkspaceLanguages(
+              latestRecord?.path || workspace.path,
+              nextScan,
+            );
+            setLanguageScan(nextLanguageScan);
+          } catch (err) {
+            setLanguageScan({
+              ...fallbackLanguageScanForEngine(nextScan.engine.engine),
+              error: describeError(err),
+            });
+          }
+        } else {
+          setLanguageScan(fallbackLanguageScanForEngine(nextScan.engine.engine));
+        }
       } else {
         setScan(null);
+        setLanguageScan(fallbackLanguageScanForEngine(baseSettings.engine));
       }
       const nextSettings = nextScan
         ? settingsWithDetectedGameFeatures(baseSettings, nextScan)
@@ -641,6 +805,78 @@ export default function ProjectSettingsModal({
       setTab('overview');
     }
   }, [showGameFeatures, tab]);
+
+  useEffect(() => {
+    if (tab !== 'lsp' || !tauriAvailable()) return;
+
+    const queryActive = lspQuery.trim().length > 0;
+    const candidates = rankedLspServers
+      .filter((server) => {
+        const configured = configuredLspById.get(server.id);
+        if (
+          !queryActive &&
+          !recommendedLspIds.has(server.id) &&
+          !configured
+        ) {
+          return false;
+        }
+        if (configured?.lastProbe) return false;
+        if (lspAvailabilityProbes[server.id]) return false;
+        if (lspAvailabilityProbingRef.current.has(server.id)) return false;
+        return (configured?.command ?? server.command).trim().length > 0;
+      })
+      .slice(0, queryActive ? 24 : 12);
+
+    if (candidates.length === 0) return;
+
+    let cancelled = false;
+    const candidateIds = candidates.map((server) => server.id);
+    candidateIds.forEach((id) => lspAvailabilityProbingRef.current.add(id));
+    setLspAvailabilityProbingIds((current) =>
+      Array.from(new Set([...current, ...candidateIds])),
+    );
+
+    void (async () => {
+      const results: Record<string, ProjectLspProbeResult> = {};
+      for (const server of candidates) {
+        const configured = configuredLspById.get(server.id);
+        const result = await probeProjectLspServer({
+          id: server.id,
+          command: configured?.command ?? server.command,
+          args: configured?.args.length ? configured.args : server.args,
+        }).catch((err): ProjectLspProbeResult => ({
+          serverId: server.id,
+          ok: false,
+          status: 'probe-error',
+          message: describeError(err),
+          resolvedCommand: null,
+          checkedAtMs: Date.now(),
+        }));
+        results[server.id] = result;
+      }
+      if (cancelled) return;
+      setLspAvailabilityProbes((current) => ({ ...current, ...results }));
+      candidateIds.forEach((id) => lspAvailabilityProbingRef.current.delete(id));
+      setLspAvailabilityProbingIds((current) =>
+        current.filter((id) => !candidateIds.includes(id)),
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+      candidateIds.forEach((id) => lspAvailabilityProbingRef.current.delete(id));
+      setLspAvailabilityProbingIds((current) =>
+        current.filter((id) => !candidateIds.includes(id)),
+      );
+    };
+  }, [
+    configuredLspById,
+    lspAvailabilityProbes,
+    lspQuery,
+    rankedLspServers,
+    recommendedLspIds,
+    tab,
+  ]);
 
   const persistSettings = useCallback(
     async (next: ProjectSettings) => {
@@ -755,6 +991,229 @@ export default function ProjectSettingsModal({
     setProbing(false);
   }, [persistSettings, settings, workspacePath]);
 
+  const lspConfigFromDefinition = useCallback(
+    (
+      definition: LspServerDefinition,
+      existing?: ProjectLspServerConfig,
+      enabled = existing?.enabled ?? true,
+    ): ProjectLspServerConfig => ({
+      id: definition.id,
+      enabled,
+      source: existing?.source ?? 'catalog',
+      command: existing?.command ?? definition.command,
+      args: existing?.args.length ? existing.args : definition.args,
+      lastProbe: existing?.lastProbe,
+    }),
+    [],
+  );
+
+  const setLspServerEnabled = useCallback(
+    (definition: LspServerDefinition, enabled: boolean) => {
+      const existing = configuredLspById.get(definition.id);
+      const nextServer = lspConfigFromDefinition(definition, existing, enabled);
+      const servers = existing
+        ? settings.lsp.servers.map((server) =>
+            server.id === definition.id ? nextServer : server,
+          )
+        : [...settings.lsp.servers, nextServer];
+      updateLsp({ servers });
+    },
+    [configuredLspById, lspConfigFromDefinition, settings.lsp.servers, updateLsp],
+  );
+
+  const updateLspServer = useCallback(
+    (definition: LspServerDefinition, patch: Partial<ProjectLspServerConfig>) => {
+      const existing = configuredLspById.get(definition.id);
+      const nextServer = {
+        ...lspConfigFromDefinition(definition, existing, existing?.enabled ?? true),
+        ...patch,
+      };
+      const servers = existing
+        ? settings.lsp.servers.map((server) =>
+            server.id === definition.id ? nextServer : server,
+          )
+        : [...settings.lsp.servers, nextServer];
+      updateLsp({ servers });
+    },
+    [configuredLspById, lspConfigFromDefinition, settings.lsp.servers, updateLsp],
+  );
+
+  const applyRecommendedLsp = useCallback(async () => {
+    const recommendedDefinitions = rankLspServers(languageScan.languages).filter((server) =>
+      recommendedLspIds.has(server.id),
+    );
+    if (recommendedDefinitions.length === 0) {
+      setStatus('没有可应用的 LSP 推荐');
+      return;
+    }
+    const recommendedSet = new Set(recommendedDefinitions.map((server) => server.id));
+    const preserved = settings.lsp.servers.filter(
+      (server) => !recommendedSet.has(server.id),
+    );
+    const additions = recommendedDefinitions.map((definition) =>
+      lspConfigFromDefinition(
+        definition,
+        configuredLspById.get(definition.id),
+        true,
+      ),
+    );
+    const next: ProjectSettings = {
+      ...settings,
+      lsp: {
+        ...settings.lsp,
+        enabled: true,
+        servers: [...preserved, ...additions],
+      },
+    };
+    setSettings(next);
+    await persistSettings(next);
+    setStatus(`已应用 ${additions.length} 个 LSP 推荐`);
+  }, [
+    configuredLspById,
+    lspConfigFromDefinition,
+    languageScan.languages,
+    persistSettings,
+    recommendedLspIds,
+    settings,
+  ]);
+
+  const probeEnabledLspServers = useCallback(async () => {
+    const enabledServers = settings.lsp.enabled
+      ? settings.lsp.servers.filter((server) => server.enabled)
+      : [];
+    if (enabledServers.length === 0) {
+      setStatus('没有可检测的 LSP');
+      return;
+    }
+    setLspProbing(true);
+    setStatus('LSP 检测中...');
+    const results: ProjectLspProbeResult[] = [];
+    for (const server of enabledServers) {
+      const definition = lspServerById(server.id);
+      const command = server.command || definition?.command || '';
+      const args = server.args.length ? server.args : definition?.args ?? [];
+      const result = await probeProjectLspServer({
+        id: server.id,
+        command,
+        args,
+      }).catch((err): ProjectLspProbeResult => ({
+        serverId: server.id,
+        ok: false,
+        status: 'probe-error',
+        message: describeError(err),
+        resolvedCommand: null,
+        checkedAtMs: Date.now(),
+      }));
+      results.push(result);
+    }
+    const resultById = new Map(results.map((result) => [result.serverId, result]));
+    const next: ProjectSettings = {
+      ...settings,
+      lsp: {
+        ...settings.lsp,
+        servers: settings.lsp.servers.map((server) => {
+          const result = resultById.get(server.id);
+          return result ? { ...server, lastProbe: result } : server;
+        }),
+      },
+    };
+    setSettings(next);
+    await persistSettings(next);
+    const okCount = results.filter((result) => result.ok).length;
+    setStatus(`LSP 检测完成：${okCount}/${results.length} 命令可用`);
+    setLspProbing(false);
+  }, [persistSettings, settings]);
+
+  const installLspServer = useCallback(
+    async (definition: RankedLspServerDefinition) => {
+      const commands = definition.installCommands ?? [];
+      if (commands.length === 0) {
+        setStatus(`${definition.title} 暂不支持一键安装，请按安装说明手动安装。`);
+        return;
+      }
+      if (!tauriAvailable()) {
+        setStatus('一键安装需要在桌面应用中运行。');
+        return;
+      }
+      const commandPreview = commands.map(installCommandText).join('\n');
+      if (
+        !settings.automation.allowThirdPartyInstall &&
+        typeof window !== 'undefined' &&
+        !window.confirm(
+          `将安装 ${definition.title}，可能会下载第三方依赖。\n\n将按当前平台选择并执行：\n${commandPreview}\n\n继续？`,
+        )
+      ) {
+        return;
+      }
+
+      setLspInstallingId(definition.id);
+      setStatus(`正在安装 ${definition.title}...`);
+      try {
+        const installResult = await installProjectLspServer({
+          serverId: definition.id,
+          commands,
+          cwd: workspacePath.trim() || null,
+        });
+        setLspInstallResults((current) => ({
+          ...current,
+          [definition.id]: installResult,
+        }));
+
+        if (!installResult.ok) {
+          setStatus(`${definition.title} 安装失败：${installResult.message}`);
+          return;
+        }
+
+        const existing = configuredLspById.get(definition.id);
+        const nextServer = lspConfigFromDefinition(definition, existing, true);
+        const probe = await probeProjectLspServer({
+          id: definition.id,
+          command: nextServer.command || definition.command,
+          args: nextServer.args.length ? nextServer.args : definition.args,
+        }).catch((err): ProjectLspProbeResult => ({
+          serverId: definition.id,
+          ok: false,
+          status: 'probe-error',
+          message: describeError(err),
+          resolvedCommand: null,
+          checkedAtMs: Date.now(),
+        }));
+        const installedServer = { ...nextServer, lastProbe: probe };
+        const servers = existing
+          ? settings.lsp.servers.map((server) =>
+              server.id === definition.id ? installedServer : server,
+            )
+          : [...settings.lsp.servers, installedServer];
+        const next: ProjectSettings = {
+          ...settings,
+          lsp: {
+            ...settings.lsp,
+            enabled: true,
+            servers,
+          },
+        };
+        setSettings(next);
+        await persistSettings(next);
+        setStatus(
+          probe.ok
+            ? `${definition.title} 已安装并启用`
+            : `${definition.title} 已安装；检测未通过：${probe.message}`,
+        );
+      } catch (err) {
+        setStatus(`${definition.title} 安装失败：${describeError(err)}`);
+      } finally {
+        setLspInstallingId(null);
+      }
+    },
+    [
+      configuredLspById,
+      lspConfigFromDefinition,
+      persistSettings,
+      settings,
+      workspacePath,
+    ],
+  );
+
   const isUnrealProject =
     (scan?.engine.engine ?? settings.engine) === 'unreal';
 
@@ -781,6 +1240,8 @@ export default function ProjectSettingsModal({
       const result = await ueMcpSetupProject({
         rootPath: workspacePath,
         serverCommand: binary.path,
+        enablePython: true,
+        writeMcpConfig: true,
       });
       setUeSetupResult(result);
       if (!result.ok) {
@@ -847,10 +1308,22 @@ export default function ProjectSettingsModal({
       };
       setSettings(probed);
       await persistSettings(probed);
+      const ueConfigChanged =
+        result.changedFiles.some(
+          (file) =>
+            file.endsWith('.uproject') ||
+            file.endsWith('Config/DefaultEngine.ini') ||
+            file.endsWith('Config/DefaultRemoteControl.ini'),
+        );
+      const restartHint = result.restartRequired
+        ? '请重启 Unreal Editor 后再连接。'
+        : ueConfigChanged
+          ? '如 Unreal Editor 已经打开，请重启后生效。'
+          : '';
       setStatus(
         probe.ok
-          ? 'Unreal MCP 已配置并连接成功。'
-          : 'Unreal MCP 已配置；等待 Unreal Editor 启动后即可连接。',
+          ? `Unreal MCP 已配置并连接成功。${restartHint}`
+          : `Unreal MCP 已配置；等待 Unreal Editor 启动后即可连接。${restartHint}`,
       );
     } catch (err) {
       setUeSetupError(describeError(err));
@@ -901,6 +1374,11 @@ export default function ProjectSettingsModal({
               </div>
               <div>标记：{scan?.engine.markers.join('、') || '无'}</div>
               <div>推荐 MCP：{scan?.suggestedMcpServers.length ?? 0}</div>
+              <div>
+                检测语言：
+                {languageScan.languages.map((item) => item.label).join('、') || '未识别'}
+              </div>
+              <div>推荐 LSP：{recommendedLspIds.size}</div>
             </div>
           </section>
 
@@ -935,6 +1413,46 @@ export default function ProjectSettingsModal({
                 <div className="text-[11px] text-fg-faint">已连接</div>
                 <div className="mt-1 text-lg font-semibold text-fg">
                   {settings.mcp.servers.filter((server) => server.lastProbe?.ok).length}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-3 rounded-md border border-border bg-panel-2 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-fg">项目 LSP</div>
+                <div className="mt-1 text-xs text-fg-faint">
+                  {languageScan.languages.length > 0
+                    ? `基于 ${languageScan.languages.length} 种语言排序推荐`
+                    : '尚未识别编程语言'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTab('lsp')}
+                className="rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg"
+              >
+                配置
+              </button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded border border-border-soft bg-bg-alt p-3">
+                <div className="text-[11px] text-fg-faint">已配置</div>
+                <div className="mt-1 text-lg font-semibold text-fg">
+                  {settings.lsp.servers.length}
+                </div>
+              </div>
+              <div className="rounded border border-border-soft bg-bg-alt p-3">
+                <div className="text-[11px] text-fg-faint">已启用</div>
+                <div className="mt-1 text-lg font-semibold text-fg">
+                  {settings.lsp.servers.filter((server) => server.enabled).length}
+                </div>
+              </div>
+              <div className="rounded border border-border-soft bg-bg-alt p-3">
+                <div className="text-[11px] text-fg-faint">命令可用</div>
+                <div className="mt-1 text-lg font-semibold text-fg">
+                  {settings.lsp.servers.filter((server) => server.lastProbe?.ok).length}
                 </div>
               </div>
             </div>
@@ -1246,6 +1764,331 @@ export default function ProjectSettingsModal({
               {probing ? '探测中...' : '探测已启用 MCP'}
             </button>
           </div>
+        </div>
+      );
+    }
+
+    if (tab === 'lsp') {
+      const enabledCount = settings.lsp.servers.filter((server) => server.enabled).length;
+      const availableIds = new Set([
+        ...settings.lsp.servers
+          .filter((server) => server.lastProbe?.ok)
+          .map((server) => server.id),
+        ...Object.values(lspAvailabilityProbes)
+          .filter((probe) => probe.ok)
+          .map((probe) => probe.serverId),
+      ]);
+      const availableCount = availableIds.size;
+      const languageText =
+        languageScan.languages
+          .slice(0, 12)
+          .map((item) => `${item.label}${item.fileCount ? ` ${item.fileCount}` : ''}`)
+          .join('、') || '未识别';
+      return (
+        <div className="grid gap-4">
+          <section className="rounded-md border border-border bg-panel-2 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-semibold text-fg">
+                  <Languages size={16} className="text-accent" />
+                  Language Server Protocol
+                </div>
+                <div className="mt-1 text-xs leading-relaxed text-fg-faint">
+                  当前语言：{languageText}。推荐项按检测语言和推荐度排序；可搜索全部 LSP。
+                </div>
+                {languageScan.error ? (
+                  <div className="mt-2 text-[11px] text-amber-300">
+                    语言扫描降级：{languageScan.error}
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2 text-[11px]">
+                <span className="rounded border border-border-soft bg-bg-alt px-2 py-1 text-fg-faint">
+                  扫描 {languageScan.filesScanned} 文件
+                </span>
+                <span className="rounded border border-accent/40 bg-accent/10 px-2 py-1 text-accent">
+                  推荐 {recommendedLspIds.size}
+                </span>
+                <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-emerald-300">
+                  已启用 {enabledCount}
+                </span>
+                <span className="rounded border border-border-soft bg-bg-alt px-2 py-1 text-fg-faint">
+                  可用 {availableCount}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <ToggleRow
+              label="启用项目 LSP"
+              hint="控制当前项目是否允许自动启动/使用已启用的 LSP 配置。"
+              checked={settings.lsp.enabled}
+              onChange={(checked) => updateLsp({ enabled: checked })}
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={applyRecommendedLsp}
+                disabled={recommendedLspIds.size === 0 || saving}
+                className="rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg disabled:opacity-50"
+              >
+                应用推荐 LSP
+              </button>
+              <button
+                type="button"
+                onClick={probeEnabledLspServers}
+                disabled={lspProbing || saving}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg disabled:opacity-50"
+              >
+                <Terminal size={13} />
+                {lspProbing ? '检测中...' : '检测已启用 LSP'}
+              </button>
+            </div>
+          </div>
+
+          <div className="relative">
+            <Search
+              size={14}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-faint"
+            />
+            <input
+              type="text"
+              value={lspQuery}
+              onChange={(event) => setLspQuery(event.currentTarget.value)}
+              placeholder="搜索语言、LSP、命令或安装方式..."
+              className="w-full rounded-lg border border-border bg-bg-alt py-2 pl-9 pr-3 text-sm text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
+            />
+          </div>
+
+          {languageScan.languages.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {languageScan.languages.slice(0, 18).map((language) => (
+                <span
+                  key={language.id}
+                  className="rounded border border-border-soft bg-bg-alt px-2 py-0.5 text-[11px] text-fg-dim"
+                  title={language.markers.join('、')}
+                >
+                  {language.label}
+                  {language.fileCount ? ` · ${language.fileCount}` : ''}
+                </span>
+              ))}
+              {languageScan.truncated ? (
+                <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
+                  扫描已截断
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {rankedLspServers.length === 0 ? (
+            <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+              没有匹配的 LSP。
+            </p>
+          ) : (
+            <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
+              {rankedLspServers.map((server: RankedLspServerDefinition) => {
+                const config = configuredLspById.get(server.id);
+                const checked = config?.enabled === true;
+                const recommended =
+                  recommendedLspIds.has(server.id) && server.recommendationScore > 0;
+                const installResult = lspInstallResults[server.id];
+                const autoInstallCommand = server.installCommands?.[0];
+                const installing = lspInstallingId === server.id;
+                const autoProbing = lspAvailabilityProbingIds.includes(server.id);
+                const probeResult = config?.lastProbe ?? lspAvailabilityProbes[server.id];
+                const commandAvailable = probeResult?.ok === true;
+                const languageLabels = (
+                  server.matchedLanguageIds.length > 0
+                    ? server.matchedLanguageIds
+                    : server.languageIds
+                ).map((id) => id);
+                return (
+                  <section
+                    key={server.id}
+                    className={cn(
+                      'flex min-h-[190px] flex-col gap-2.5 rounded-md border p-3',
+                      recommended
+                        ? 'border-accent/50 bg-accent/5'
+                        : 'border-border bg-panel-2',
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <label className="flex min-w-0 flex-1 items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setLspServerEnabled(server, event.currentTarget.checked)
+                          }
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+                        />
+                        <span className="min-w-0">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate text-sm font-semibold text-fg">
+                              {server.title}
+                            </span>
+                            {recommended ? (
+                              <span className="shrink-0 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent">
+                                推荐
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="mt-1 block max-h-10 overflow-hidden text-xs leading-snug text-fg-faint">
+                            {server.description}
+                          </span>
+                        </span>
+                      </label>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {autoProbing ? (
+                          <span className="inline-flex items-center gap-1 rounded border border-border-soft bg-bg-alt px-2 py-0.5 text-[11px] text-fg-faint">
+                            <RefreshCw size={11} className="animate-spin" />
+                            检测中
+                          </span>
+                        ) : (
+                          <LspProbeBadge result={probeResult} />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void openExternal(server.sourceUrl)}
+                          title="打开来源"
+                          aria-label="打开来源"
+                          className="flex h-7 w-7 items-center justify-center rounded border border-border-soft bg-bg-alt text-fg-faint hover:border-accent hover:text-fg"
+                        >
+                          <ExternalLink size={13} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1">
+                      {languageLabels.map((id) => (
+                        <span
+                          key={`${server.id}-${id}`}
+                          className={cn(
+                            'rounded border px-1.5 py-0.5 text-[10px]',
+                            server.matchedLanguageIds.includes(id)
+                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                              : 'border-border-soft bg-bg-alt text-fg-faint',
+                          )}
+                        >
+                          {PROJECT_LANGUAGE_LABELS[id]}
+                        </span>
+                      ))}
+                      <span className="rounded border border-border-soft bg-bg-alt px-1.5 py-0.5 text-[10px] text-fg-faint">
+                        {server.trust === 'official'
+                          ? '官方'
+                          : server.trust === 'curated'
+                            ? '精选'
+                            : '社区'}
+                      </span>
+                    </div>
+
+                    <div className="mt-auto grid gap-2">
+                      <div
+                        className="truncate rounded border border-border-soft bg-bg-alt px-2 py-1 font-mono text-[11px] text-fg-dim"
+                        title={autoInstallCommand ? installCommandText(autoInstallCommand) : server.install}
+                      >
+                        {autoInstallCommand
+                          ? installCommandText(autoInstallCommand)
+                          : server.install}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void installLspServer(server)}
+                          disabled={
+                            commandAvailable ||
+                            !autoInstallCommand ||
+                            lspInstallingId != null ||
+                            saving
+                          }
+                          title={
+                            commandAvailable
+                              ? '命令已可用，无需安装'
+                              : autoInstallCommand
+                              ? '一键安装并启用'
+                              : '该 LSP 暂不支持自动安装'
+                          }
+                          className="inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/10 px-2 py-1 text-[11px] font-semibold text-fg hover:bg-accent/20 disabled:border-border disabled:bg-bg-alt disabled:text-fg-faint"
+                        >
+                          {commandAvailable ? (
+                            <Check size={12} />
+                          ) : installing ? (
+                            <RefreshCw size={12} className="animate-spin" />
+                          ) : (
+                            <Download size={12} />
+                          )}
+                          {commandAvailable ? '已安装' : installing ? '安装中' : '一键安装'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLspServerEnabled(server, !checked)}
+                          className="rounded-md border border-border bg-bg-alt px-2 py-1 text-[11px] text-fg-dim hover:border-accent hover:text-fg"
+                        >
+                          {checked ? '关闭' : '启用'}
+                        </button>
+                      </div>
+                      <details className="group">
+                        <summary className="cursor-pointer select-none text-[11px] text-fg-faint hover:text-fg">
+                          命令/参数
+                        </summary>
+                        <div className="mt-2 grid gap-2">
+                          <SettingsRow label="命令">
+                            <input
+                              value={config?.command ?? server.command}
+                              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                updateLspServer(server, {
+                                  command: event.currentTarget.value,
+                                })
+                              }
+                              className="w-full rounded-md border border-border bg-bg px-2 py-1.5 font-mono text-xs text-fg outline-none focus:border-accent"
+                            />
+                          </SettingsRow>
+                          <SettingsRow label="参数" hint="空格分隔；按 LSP stdio 启动参数填写">
+                            <input
+                              value={(config?.args.length ? config.args : server.args).join(' ')}
+                              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                updateLspServer(server, {
+                                  args: event.currentTarget.value
+                                    .split(' ')
+                                    .map((item) => item.trim())
+                                    .filter(Boolean),
+                                })
+                              }
+                              className="w-full rounded-md border border-border bg-bg px-2 py-1.5 font-mono text-xs text-fg outline-none focus:border-accent"
+                            />
+                          </SettingsRow>
+                        </div>
+                      </details>
+                    </div>
+
+                    <div className="grid gap-1 text-[11px] text-fg-faint">
+                      {installResult ? (
+                        <div
+                          className={cn(
+                            'truncate',
+                            installResult.ok ? 'text-emerald-300' : 'text-red-300',
+                          )}
+                          title={[
+                            installResult.commandLine,
+                            installResult.stderr || installResult.stdout,
+                          ]
+                            .filter(Boolean)
+                            .join('\n\n')}
+                        >
+                          安装：{installResult.ok ? '成功' : '失败'} · {installResult.message}
+                        </div>
+                      ) : null}
+                      <div>
+                        最近检测：{formatTime(probeResult?.checkedAtMs)}
+                        {probeResult ? ` · ${probeResult.message}` : ''}
+                      </div>
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          )}
         </div>
       );
     }

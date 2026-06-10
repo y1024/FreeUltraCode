@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -450,6 +450,8 @@ struct WorkspaceChanges {
     source: String,
     files: Vec<WorkspaceChangeFile>,
     truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scan_scope: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -2816,6 +2818,58 @@ struct ProjectMcpProbeResult {
     checked_at_ms: u64,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectLspProbeServerConfig {
+    id: String,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectLspProbeResult {
+    server_id: String,
+    ok: bool,
+    status: String,
+    message: String,
+    resolved_command: Option<String>,
+    checked_at_ms: u64,
+}
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectLspInstallCommand {
+    label: String,
+    command: String,
+    args: Vec<String>,
+    platforms: Option<Vec<cli_runtime::CliPlatform>>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectLspInstallRequest {
+    server_id: String,
+    commands: Vec<ProjectLspInstallCommand>,
+    cwd: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectLspInstallResult {
+    server_id: String,
+    ok: bool,
+    status: String,
+    message: String,
+    command_line: Option<String>,
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    platform: cli_runtime::CliPlatform,
+    checked_at_ms: u64,
+}
+
 fn project_path_display(path: &Path) -> String {
     display_preview_path(path)
 }
@@ -3050,9 +3104,7 @@ fn project_suggested_mcp_servers(engine: &str) -> Vec<ProjectMcpServerSuggestion
             let command = cached
                 .as_ref()
                 .map(|path| display_preview_path(path))
-                .or_else(|| {
-                    ue_mcp_expected_binary_path().map(|path| display_preview_path(&path))
-                })
+                .or_else(|| ue_mcp_expected_binary_path().map(|path| display_preview_path(&path)))
                 .unwrap_or_else(|| UE_MCP_ASSET_NAME.to_string());
             let (available, availability_note) = if cached.is_some() {
                 (true, "已安装并校验的 UE MCP 二进制。".to_string())
@@ -3436,6 +3488,379 @@ async fn project_mcp_probe(
         .map_err(|e| format!("MCP 探测任务失败: {e}"))?
 }
 
+fn project_lsp_probe_blocking(server: ProjectLspProbeServerConfig) -> ProjectLspProbeResult {
+    let command = server
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+
+    if command.is_empty() {
+        return ProjectLspProbeResult {
+            server_id: server.id,
+            ok: false,
+            status: "missing-command".to_string(),
+            message: "LSP 命令为空。".to_string(),
+            resolved_command: None,
+            checked_at_ms: now_ms(),
+        };
+    }
+
+    let expanded = project_expand_path_text(command);
+    let path_like =
+        expanded.contains('/') || expanded.contains('\\') || Path::new(&expanded).is_absolute();
+    let resolved = if path_like {
+        Path::new(&expanded)
+            .exists()
+            .then(|| PathBuf::from(&expanded))
+    } else {
+        cli_runtime::resolve_command_path(&expanded)
+    };
+    let args = server.args.unwrap_or_default();
+    let arg_note = if args.is_empty() {
+        String::new()
+    } else {
+        format!("；参数 {}", args.join(" "))
+    };
+
+    match resolved {
+        Some(path) => ProjectLspProbeResult {
+            server_id: server.id,
+            ok: true,
+            status: "available".to_string(),
+            message: format!("命令可用：{}{}", project_path_display(&path), arg_note),
+            resolved_command: Some(project_path_display(&path)),
+            checked_at_ms: now_ms(),
+        },
+        None => ProjectLspProbeResult {
+            server_id: server.id,
+            ok: false,
+            status: "missing".to_string(),
+            message: if path_like {
+                "命令路径不存在，请先安装或修正路径。".to_string()
+            } else {
+                "PATH 中未找到命令，请先安装或加入 PATH。".to_string()
+            },
+            resolved_command: None,
+            checked_at_ms: now_ms(),
+        },
+    }
+}
+
+#[tauri::command]
+async fn project_lsp_probe(
+    server: ProjectLspProbeServerConfig,
+) -> Result<ProjectLspProbeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || project_lsp_probe_blocking(server))
+        .await
+        .map_err(|e| format!("LSP 探测任务失败: {e}"))
+}
+
+const PROJECT_LSP_INSTALL_TIMEOUT_SECS: u64 = 900;
+const PROJECT_LSP_INSTALL_OUTPUT_LIMIT: usize = 12_000;
+const PROJECT_LSP_ALLOWED_INSTALLERS: &[&str] = &[
+    "winget",
+    "brew",
+    "choco",
+    "scoop",
+    "npm",
+    "pnpm",
+    "yarn",
+    "bun",
+    "pip",
+    "pip3",
+    "python",
+    "python3",
+    "py",
+    "dotnet",
+    "rustup",
+    "cargo",
+    "go",
+    "gem",
+    "composer",
+    "opam",
+    "nix",
+    "julia",
+    "r",
+    "rscript",
+    "pwsh",
+    "powershell",
+    "cs",
+    "coursier",
+    "ghcup",
+];
+
+fn project_lsp_install_arg_safe(value: &str) -> bool {
+    !value.is_empty() && !value.contains('\0') && !value.contains('\n') && !value.contains('\r')
+}
+
+fn project_lsp_install_command_name(command: &str) -> String {
+    let expanded = project_expand_path_text(command.trim());
+    let file_name = Path::new(&expanded)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(expanded.as_str());
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(file_name);
+    stem.to_ascii_lowercase()
+}
+
+fn project_lsp_installer_allowed(command: &str) -> bool {
+    let name = project_lsp_install_command_name(command);
+    PROJECT_LSP_ALLOWED_INSTALLERS.contains(&name.as_str())
+}
+
+fn project_lsp_quote_command_part(value: &str) -> String {
+    if value.chars().all(|ch| {
+        ch.is_ascii_alphanumeric()
+            || matches!(
+                ch,
+                '_' | '-' | '.' | '/' | '\\' | ':' | '@' | '%' | '#' | '=' | '+'
+            )
+    }) {
+        value.to_string()
+    } else {
+        format!("{value:?}")
+    }
+}
+
+fn project_lsp_install_command_line(command: &ProjectLspInstallCommand) -> String {
+    std::iter::once(command.command.as_str())
+        .chain(command.args.iter().map(String::as_str))
+        .map(project_lsp_quote_command_part)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn project_lsp_install_platform_match(
+    command: &ProjectLspInstallCommand,
+    platform: cli_runtime::CliPlatform,
+) -> bool {
+    command
+        .platforms
+        .as_ref()
+        .map(|platforms| platforms.is_empty() || platforms.contains(&platform))
+        .unwrap_or(true)
+}
+
+fn project_lsp_install_result(
+    request: &ProjectLspInstallRequest,
+    ok: bool,
+    status: &str,
+    message: String,
+    command_line: Option<String>,
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    platform: cli_runtime::CliPlatform,
+) -> ProjectLspInstallResult {
+    ProjectLspInstallResult {
+        server_id: request.server_id.clone(),
+        ok,
+        status: status.to_string(),
+        message,
+        command_line,
+        stdout: truncate_chars(&stdout, PROJECT_LSP_INSTALL_OUTPUT_LIMIT),
+        stderr: truncate_chars(&stderr, PROJECT_LSP_INSTALL_OUTPUT_LIMIT),
+        exit_code,
+        timed_out,
+        platform,
+        checked_at_ms: now_ms(),
+    }
+}
+
+fn project_lsp_install_blocking(
+    request: ProjectLspInstallRequest,
+) -> Result<ProjectLspInstallResult, String> {
+    let platform = cli_runtime::platform();
+    let Some(command) = request
+        .commands
+        .iter()
+        .find(|command| project_lsp_install_platform_match(command, platform))
+        .cloned()
+    else {
+        return Ok(project_lsp_install_result(
+            &request,
+            false,
+            "unsupported-platform",
+            "当前平台没有可自动执行的安装命令，请按安装说明手动安装。".to_string(),
+            None,
+            String::new(),
+            String::new(),
+            None,
+            false,
+            platform,
+        ));
+    };
+
+    let command_text = project_lsp_install_command_line(&command);
+    if !project_lsp_install_arg_safe(command.command.trim())
+        || command
+            .args
+            .iter()
+            .any(|arg| !project_lsp_install_arg_safe(arg))
+    {
+        return Ok(project_lsp_install_result(
+            &request,
+            false,
+            "invalid-command",
+            "安装命令包含不允许的控制字符。".to_string(),
+            Some(command_text),
+            String::new(),
+            String::new(),
+            None,
+            false,
+            platform,
+        ));
+    }
+    if !project_lsp_installer_allowed(&command.command) {
+        return Ok(project_lsp_install_result(
+            &request,
+            false,
+            "installer-not-allowed",
+            format!("不允许直接执行该安装器：{}", command.command),
+            Some(command_text),
+            String::new(),
+            String::new(),
+            None,
+            false,
+            platform,
+        ));
+    }
+
+    let cwd = request
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(project_scan_root)
+        .transpose()?;
+    let stdout_path = temp_output_path("freeultracode-lsp-install-stdout", "txt");
+    let stderr_path = temp_output_path("freeultracode-lsp-install-stderr", "txt");
+    let _stdout_guard = TempFileGuard::new(stdout_path.clone());
+    let _stderr_guard = TempFileGuard::new(stderr_path.clone());
+    let stdout_file = std::fs::File::create(&stdout_path)
+        .map_err(|e| format!("创建 LSP 安装输出缓存失败: {e}"))?;
+    let stderr_file = std::fs::File::create(&stderr_path)
+        .map_err(|e| format!("创建 LSP 安装错误缓存失败: {e}"))?;
+
+    let mut cmd = new_spawn_command(command.command.trim());
+    if let Some(cwd) = cwd.as_ref() {
+        cmd.current_dir(cwd);
+    }
+    cmd.args(&command.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
+
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            return Ok(project_lsp_install_result(
+                &request,
+                false,
+                "spawn-failed",
+                format!("启动安装命令失败: {err}"),
+                Some(command_text),
+                read_workspace_status_temp(&stdout_path),
+                read_workspace_status_temp(&stderr_path),
+                None,
+                false,
+                platform,
+            ));
+        }
+    };
+
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(PROJECT_LSP_INSTALL_TIMEOUT_SECS);
+    let (exit_code, timed_out) = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break (status.code(), false),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    terminate_child_tree(&mut child);
+                    break (None, true);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(_) => {
+                terminate_child_tree(&mut child);
+                break (None, false);
+            }
+        }
+    };
+
+    let stdout = read_workspace_status_temp(&stdout_path);
+    let stderr = read_workspace_status_temp(&stderr_path);
+    if timed_out {
+        return Ok(project_lsp_install_result(
+            &request,
+            false,
+            "timeout",
+            format!(
+                "安装超时（{}s）已终止：{}",
+                PROJECT_LSP_INSTALL_TIMEOUT_SECS, command_text
+            ),
+            Some(command_text),
+            stdout,
+            stderr,
+            exit_code,
+            true,
+            platform,
+        ));
+    }
+
+    let ok = exit_code == Some(0);
+    let label = command.label.trim();
+    let label_note = if label.is_empty() {
+        String::new()
+    } else {
+        format!("{label}：")
+    };
+    let message = if ok {
+        format!("{label_note}安装完成。")
+    } else {
+        let detail = stderr
+            .trim()
+            .lines()
+            .last()
+            .or_else(|| stdout.trim().lines().last());
+        format!(
+            "{label_note}安装失败{}{}",
+            exit_code
+                .map(|code| format!("（退出码 {code}）"))
+                .unwrap_or_default(),
+            detail.map(|line| format!("：{line}")).unwrap_or_default()
+        )
+    };
+
+    Ok(project_lsp_install_result(
+        &request,
+        ok,
+        if ok { "installed" } else { "failed" },
+        message,
+        Some(command_text),
+        stdout,
+        stderr,
+        exit_code,
+        false,
+        platform,
+    ))
+}
+
+#[tauri::command]
+async fn project_lsp_install(
+    request: ProjectLspInstallRequest,
+) -> Result<ProjectLspInstallResult, String> {
+    tauri::async_runtime::spawn_blocking(move || project_lsp_install_blocking(request))
+        .await
+        .map_err(|e| format!("LSP 安装任务失败: {e}"))?
+}
+
 // ===== Unreal Engine MCP one-click install + setup =====
 //
 // Wraps `ue-mcp-for-all-versions` (https://github.com/wellingfeng/ue-mcp-for-all-versions):
@@ -3497,6 +3922,8 @@ struct UeMcpSetupResult {
     changed_files: Vec<String>,
     notes: Vec<String>,
     warnings: Vec<String>,
+    unreal_editor_running: bool,
+    restart_required: bool,
     error: Option<String>,
     binary_path: String,
     server_command: String,
@@ -3656,8 +4083,46 @@ fn ue_mcp_parse_engine_version(assoc: &str) -> Option<(u32, u32)> {
 }
 
 /// Stock engine plugins required for the MCP server to drive the editor over
-/// RemoteControl. `PythonScriptPlugin` is optional (gated by `enable_python`).
-const UE_MCP_REQUIRED_PLUGINS: &[&str] = &["RemoteControl", "EditorScriptingUtilities"];
+/// RemoteControl, EditorScripting helpers, and Python execution tools.
+const UE_MCP_REQUIRED_PLUGINS: &[&str] = &[
+    "RemoteControl",
+    "EditorScriptingUtilities",
+    "PythonScriptPlugin",
+];
+
+fn ue_mcp_tasklist_contains_unreal_editor(tasklist_stdout: &str) -> bool {
+    tasklist_stdout.lines().any(|line| {
+        let process_name = line
+            .trim()
+            .trim_start_matches('"')
+            .split("\",")
+            .next()
+            .unwrap_or("")
+            .trim_matches('"')
+            .to_ascii_lowercase();
+        (process_name.starts_with("unrealeditor") || process_name.starts_with("ue4editor"))
+            && !process_name.contains("-cmd")
+    })
+}
+
+fn ue_mcp_unreal_editor_running() -> bool {
+    if !cfg!(target_os = "windows") {
+        return false;
+    }
+    let output = Command::new("tasklist")
+        .arg("/FO")
+        .arg("CSV")
+        .arg("/NH")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    output
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| ue_mcp_tasklist_contains_unreal_editor(&String::from_utf8_lossy(&out.stdout)))
+        .unwrap_or(false)
+}
 
 /// Ensure the named plugins are enabled in the `.uproject` JSON. Returns the
 /// list of plugins that were newly enabled (empty if all were already on).
@@ -3667,10 +4132,10 @@ fn ue_mcp_enable_uproject_plugins(
     uproject: &Path,
     plugins: &[&str],
 ) -> Result<Vec<String>, String> {
-    let text = std::fs::read_to_string(uproject)
-        .map_err(|e| format!("读取 .uproject 失败：{e}"))?;
-    let mut doc: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("解析 .uproject JSON 失败：{e}"))?;
+    let text =
+        std::fs::read_to_string(uproject).map_err(|e| format!("读取 .uproject 失败：{e}"))?;
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("解析 .uproject JSON 失败：{e}"))?;
     if !doc.is_object() {
         return Err(".uproject 顶层不是 JSON 对象。".to_string());
     }
@@ -3728,58 +4193,152 @@ fn ue_mcp_enable_uproject_plugins(
     Ok(newly_enabled)
 }
 
-/// Make the RemoteControl web server auto-start when the editor launches, so the
-/// MCP server can reach it without a manual `WebControl.StartServer`. Appends an
-/// idempotent `[/Script/...]` section + CVar to `Config/DefaultEngine.ini`. The
-/// CVar/port differs per engine line:
+fn ini_has_line(existing: &str, wanted: &str) -> bool {
+    existing.lines().any(|line| line.trim() == wanted)
+}
+
+fn ini_missing_any_line(existing: &str, wanted: &[&str]) -> bool {
+    wanted
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .any(|line| !ini_has_line(existing, line))
+}
+
+const UE_MCP_REMOTE_CONTROL_STARTUP_MARKER: &str =
+    "; >>> FreeUltraCode: Unreal MCP RemoteControl auto-start";
+const UE_MCP_REMOTE_CONTROL_PERMISSION_MARKER: &str =
+    "; >>> FreeUltraCode: Unreal MCP full-access defaults";
+const UE_MCP_REMOTE_CONTROL_PERMISSION_LINES: &[&str] = &[
+    "[/Script/RemoteControl.RemoteControlSettings]",
+    "[/Script/RemoteControlCommon.RemoteControlSettings]",
+    "bAutoStartWebServer=True",
+    "bAutoStartWebSocketServer=True",
+    "RemoteControlHttpServerPort=30010",
+    "RemoteControlWebSocketServerPort=30020",
+    "bRestrictServerAccess=False",
+    "bEnforcePassphraseForRemoteClients=False",
+    "bShowPassphraseDisabledWarning=False",
+    "bAllowConsoleCommandRemoteExecution=True",
+    "bEnableRemotePythonExecution=True",
+    // Compatibility aliases used by older/community UE RemoteControl builds.
+    "bAllowRemotePythonExecution=True",
+    "bAllowPythonExecution=True",
+    "bEnableRemoteExecution=True",
+    "bAllowRemoteExecutionOfConsoleCommands=True",
+    "[/Script/PythonScriptPlugin.PythonScriptPluginSettings]",
+    "bRemoteExecution=True",
+];
+
+fn ue_mcp_remote_control_permission_block() -> String {
+    let mut block = String::new();
+    block.push('\n');
+    block.push_str(UE_MCP_REMOTE_CONTROL_PERMISSION_MARKER);
+    block.push('\n');
+    for section in [
+        "[/Script/RemoteControl.RemoteControlSettings]",
+        "[/Script/RemoteControlCommon.RemoteControlSettings]",
+    ] {
+        block.push_str(section);
+        block.push('\n');
+        block.push_str("bAutoStartWebServer=True\n");
+        block.push_str("bAutoStartWebSocketServer=True\n");
+        block.push_str("RemoteControlHttpServerPort=30010\n");
+        block.push_str("RemoteControlWebSocketServerPort=30020\n");
+        block.push_str("bRestrictServerAccess=False\n");
+        block.push_str("bEnforcePassphraseForRemoteClients=False\n");
+        block.push_str("bShowPassphraseDisabledWarning=False\n");
+        block.push_str("bAllowConsoleCommandRemoteExecution=True\n");
+        block.push_str("bEnableRemotePythonExecution=True\n");
+        block.push_str("bAllowRemotePythonExecution=True\n");
+        block.push_str("bAllowPythonExecution=True\n");
+        block.push_str("bEnableRemoteExecution=True\n");
+        block.push_str("bAllowRemoteExecutionOfConsoleCommands=True\n\n");
+    }
+    block.push_str("[/Script/PythonScriptPlugin.PythonScriptPluginSettings]\n");
+    block.push_str("bRemoteExecution=True\n");
+    block.push_str("bAllowRemotePythonExecution=True\n");
+    block.push_str("; <<< FreeUltraCode: Unreal MCP full-access defaults\n");
+    block
+}
+
+/// Make the RemoteControl web server auto-start when the editor launches and
+/// enable the permissive project settings the UE MCP bridge needs. Appends
+/// idempotent managed blocks to both `Config/DefaultEngine.ini` and
+/// `Config/DefaultRemoteControl.ini`. The startup CVar differs per engine line:
 ///   - UE 4.25:  `WebControl.EnableServerOnStartup 1` on :8080 (RemoteControlWeb)
 ///   - UE 4.26+: RemoteControl auto-starts on :30010, but enabling the startup
 ///     CVar is harmless and makes 4.26 web-control explicit.
-/// Returns Some(relative_marker) if the file was created/modified.
-fn ue_mcp_write_remote_control_config(
+/// Returns relative markers for files created/modified.
+fn ue_mcp_write_remote_control_config_file(
     root: &Path,
+    ini_path: &Path,
     engine: Option<(u32, u32)>,
+    include_startup: bool,
 ) -> Result<Option<String>, String> {
-    let config_dir = root.join("Config");
-    std::fs::create_dir_all(&config_dir)
-        .map_err(|e| format!("创建 Config 目录失败：{e}"))?;
-    let ini_path = config_dir.join("DefaultEngine.ini");
+    if let Some(parent) = ini_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建 Config 目录失败：{e}"))?;
+    }
 
     let existing = std::fs::read_to_string(&ini_path).unwrap_or_default();
-    // Idempotency marker: if our managed block is already present, do nothing.
-    const MARKER: &str = "; >>> FreeUltraCode: Unreal MCP RemoteControl auto-start";
-    if existing.contains(MARKER) {
-        return Ok(None);
+    let is_legacy_425 = matches!(engine, Some((4, minor)) if minor <= 25);
+    let mut blocks = Vec::new();
+    if include_startup && !existing.contains(UE_MCP_REMOTE_CONTROL_STARTUP_MARKER) {
+        let mut block = String::new();
+        block.push('\n');
+        block.push_str(UE_MCP_REMOTE_CONTROL_STARTUP_MARKER);
+        block.push('\n');
+        block.push_str("[/Script/Engine.Engine]\n");
+        if is_legacy_425 {
+            block.push_str(
+                "+ConsoleCommands=WebControl.EnableServerOnStartup 1\n+ConsoleCommands=WebControl.StartServer\n",
+            );
+        } else {
+            block.push_str(
+                "+ConsoleCommands=RemoteControl.EnableWebServerOnStartup 1\n+ConsoleCommands=WebControl.EnableServerOnStartup 1\n",
+            );
+        }
+        block.push_str("; <<< FreeUltraCode: Unreal MCP RemoteControl auto-start\n");
+        blocks.push(block);
     }
 
-    // For 4.25 the web remote control plugin uses a different CVar/port; 4.26+
-    // auto-start :30010. We always set the startup CVar (harmless when unused)
-    // so older lines also come up without manual console input.
-    let is_legacy_425 = matches!(engine, Some((4, minor)) if minor <= 25);
-    let mut block = String::new();
-    block.push('\n');
-    block.push_str(MARKER);
-    block.push('\n');
-    block.push_str("[/Script/Engine.Engine]\n");
-    if is_legacy_425 {
-        block.push_str(
-            "+ConsoleCommands=WebControl.EnableServerOnStartup 1\n+ConsoleCommands=WebControl.StartServer\n",
-        );
-    } else {
-        block.push_str(
-            "+ConsoleCommands=RemoteControl.EnableWebServerOnStartup 1\n+ConsoleCommands=WebControl.EnableServerOnStartup 1\n",
-        );
+    if ini_missing_any_line(&existing, UE_MCP_REMOTE_CONTROL_PERMISSION_LINES) {
+        blocks.push(ue_mcp_remote_control_permission_block());
     }
-    block.push_str("; <<< FreeUltraCode: Unreal MCP RemoteControl auto-start\n");
+
+    if blocks.is_empty() {
+        return Ok(None);
+    }
 
     let mut next = existing;
     if !next.is_empty() && !next.ends_with('\n') {
         next.push('\n');
     }
-    next.push_str(&block);
+    next.push_str(&blocks.concat());
     atomic_write(&ini_path, next.as_bytes())
-        .map_err(|e| format!("写入 DefaultEngine.ini 失败：{e}"))?;
+        .map_err(|e| format!("写入 {} 失败：{e}", project_relative_marker(root, ini_path)))?;
     Ok(Some(project_relative_marker(root, &ini_path)))
+}
+
+fn ue_mcp_write_remote_control_config(
+    root: &Path,
+    engine: Option<(u32, u32)>,
+) -> Result<Vec<String>, String> {
+    let config_dir = root.join("Config");
+    let mut changed = Vec::new();
+    for (file_name, include_startup) in [
+        ("DefaultEngine.ini", true),
+        ("DefaultRemoteControl.ini", false),
+    ] {
+        if let Some(marker) = ue_mcp_write_remote_control_config_file(
+            root,
+            &config_dir.join(file_name),
+            engine,
+            include_startup,
+        )? {
+            changed.push(marker);
+        }
+    }
+    Ok(changed)
 }
 
 /// Merge the MCP server entry into the project `.mcp.json` (Claude Code format:
@@ -3821,8 +4380,8 @@ fn ue_mcp_write_project_mcp_json(
     }
     servers_obj.insert(UE_MCP_SERVER_ID.to_string(), desired);
 
-    let serialized = serde_json::to_string_pretty(&doc)
-        .map_err(|e| format!("序列化 .mcp.json 失败：{e}"))?;
+    let serialized =
+        serde_json::to_string_pretty(&doc).map_err(|e| format!("序列化 .mcp.json 失败：{e}"))?;
     atomic_write(&mcp_path, serialized.as_bytes())
         .map_err(|e| format!("写入 .mcp.json 失败：{e}"))?;
     Ok(Some(project_relative_marker(root, &mcp_path)))
@@ -3857,18 +4416,18 @@ fn ue_mcp_setup_project_blocking(req: UeMcpSetupRequest) -> Result<UeMcpSetupRes
         .as_deref()
         .and_then(ue_mcp_parse_engine_version);
 
-    // Plugin set: always RemoteControl + EditorScriptingUtilities; Python opt-in.
-    let mut wanted_plugins: Vec<&str> = UE_MCP_REQUIRED_PLUGINS.to_vec();
-    let enable_python = req.enable_python != Some(false);
-    if enable_python {
-        wanted_plugins.push("PythonScriptPlugin");
-    }
+    // PythonScriptPlugin is intentionally always enabled. Older callers may
+    // still send enablePython=false; ignore it so one-click setup keeps the
+    // Python-backed UE MCP tools available.
+    let _legacy_enable_python = req.enable_python;
+    let wanted_plugins: Vec<&str> = UE_MCP_REQUIRED_PLUGINS.to_vec();
+    let unreal_editor_running = ue_mcp_unreal_editor_running();
 
-    let configured_plugins: Vec<String> =
-        wanted_plugins.iter().map(|p| (*p).to_string()).collect();
+    let configured_plugins: Vec<String> = wanted_plugins.iter().map(|p| (*p).to_string()).collect();
     let mut changed_files: Vec<String> = Vec::new();
     let mut notes: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+    let mut restart_sensitive_changed = false;
 
     if dry_run {
         // Report what *would* change without touching disk.
@@ -3884,6 +4443,8 @@ fn ue_mcp_setup_project_blocking(req: UeMcpSetupRequest) -> Result<UeMcpSetupRes
             changed_files,
             notes,
             warnings,
+            unreal_editor_running,
+            restart_required: false,
             error: None,
             binary_path: binary_display,
             server_command,
@@ -3894,22 +4455,43 @@ fn ue_mcp_setup_project_blocking(req: UeMcpSetupRequest) -> Result<UeMcpSetupRes
     // 1) Enable the stock plugins in the .uproject.
     let newly_enabled = ue_mcp_enable_uproject_plugins(&uproject, &wanted_plugins)?;
     if !newly_enabled.is_empty() {
+        restart_sensitive_changed = true;
         changed_files.push(project_relative_marker(&root, &uproject));
     }
     // `configured_plugins` already holds the full set we ensured (enabled now or
     // already on) so the UI shows the complete picture rather than only deltas.
 
     // 2) Make RemoteControl auto-start so the editor is reachable without a
-    //    manual console command (the exact thing the probe message asked for).
-    if let Some(marker) = ue_mcp_write_remote_control_config(&root, engine_version)? {
-        changed_files.push(marker);
+    //    manual console command, and open the RemoteControl/Python execution
+    //    switches used by ue-mcp-for-all-versions.
+    let config_markers = ue_mcp_write_remote_control_config(&root, engine_version)?;
+    if !config_markers.is_empty() {
+        restart_sensitive_changed = true;
+        changed_files.extend(config_markers);
     }
+    notes.push(
+        "已确保 UE MCP 默认权限：RemoteControl HTTP/WebSocket 自启动、远程 Python 执行、远程控制台命令。"
+            .to_string(),
+    );
 
     // 3) Merge the project .mcp.json (only when requested; default on).
     if req.write_mcp_config != Some(false) {
         if let Some(marker) = ue_mcp_write_project_mcp_json(&root, &server_command)? {
             changed_files.push(marker);
         }
+    }
+
+    let restart_required = unreal_editor_running && restart_sensitive_changed;
+    if restart_required {
+        warnings.push(
+            "已检测到 Unreal Editor 正在运行或启动中；本次启用了插件或改动了 RemoteControl / Python 权限配置，必须重启 Unreal Editor 后生效。"
+                .to_string(),
+        );
+    } else if restart_sensitive_changed {
+        notes.push(
+            "如 Unreal Editor 已经打开，请重启编辑器；未打开则下次启动会直接加载这些配置。"
+                .to_string(),
+        );
     }
 
     // Best-effort connectivity probe. A failure here is EXPECTED when the editor
@@ -3943,7 +4525,13 @@ fn ue_mcp_setup_project_blocking(req: UeMcpSetupRequest) -> Result<UeMcpSetupRes
                     .map(|n| n > 0)
                     .unwrap_or(false);
             if reachable {
-                notes.push("已检测到正在运行的 Unreal 编辑器，RemoteControl 连接正常。".to_string());
+                notes
+                    .push("已检测到正在运行的 Unreal 编辑器，RemoteControl 连接正常。".to_string());
+            } else if unreal_editor_running {
+                warnings.push(
+                    "已检测到 Unreal Editor 正在运行或启动中，但 RemoteControl 暂不可达；如刚完成一键配置，请重启 Unreal Editor。"
+                        .to_string(),
+                );
             } else {
                 notes.push(
                     "尚未检测到运行中的 Unreal 编辑器（属正常）。配置已写入，编辑器启动后 MCP 会自动连接。"
@@ -3972,11 +4560,15 @@ fn ue_mcp_setup_project_blocking(req: UeMcpSetupRequest) -> Result<UeMcpSetupRes
         changed_files,
         notes,
         warnings,
+        unreal_editor_running,
+        restart_required,
         error: None,
         binary_path: binary_display,
         server_command,
         raw_report: serde_json::json!({
             "newlyEnabledPlugins": newly_enabled,
+            "unrealEditorRunning": unreal_editor_running,
+            "restartRequired": restart_required,
             "probe": probe_report,
         }),
     })
@@ -4387,6 +4979,13 @@ fn truncate_workspace_changes(files: &mut Vec<WorkspaceChangeFile>) -> bool {
 }
 
 const WORKSPACE_STATUS_COMMAND_TIMEOUT_MS: u64 = 6_000;
+const P4_STATUS_TOTAL_TIMEOUT_MS: u64 = 12_000;
+const P4_STATUS_SPEC_BATCH_SIZE: usize = 6;
+const P4_STATUS_MAX_SPEC_VISITS: usize = 2048;
+const P4_STATUS_BATCH_PAUSE_MS: u64 = 15;
+const P4_OBSERVER_STATUS_COMMANDS: &[&[&str]] = &[&["opened"], &["reconcile", "-n", "-ead"]];
+const P4_WHERE_MAPPING_COMMANDS: &[&[&str]] =
+    &[&["where", "..."], &["where", "*"], &["where", "."]];
 
 struct WorkspaceStatusCommandOutput {
     success: bool,
@@ -4412,6 +5011,20 @@ fn run_workspace_status_command(
     root: &Path,
     program: &str,
     args: &[&str],
+) -> Result<WorkspaceStatusCommandOutput, String> {
+    run_workspace_status_command_with_timeout(
+        root,
+        program,
+        args,
+        std::time::Duration::from_millis(WORKSPACE_STATUS_COMMAND_TIMEOUT_MS),
+    )
+}
+
+fn run_workspace_status_command_with_timeout(
+    root: &Path,
+    program: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
 ) -> Result<WorkspaceStatusCommandOutput, String> {
     let temp_id = format!(
         "fuc-status-{}-{}-{}",
@@ -4443,7 +5056,6 @@ fn run_workspace_status_command(
     };
 
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_millis(WORKSPACE_STATUS_COMMAND_TIMEOUT_MS);
     let mut timed_out = false;
     let success = loop {
         match child.try_wait() {
@@ -4477,6 +5089,16 @@ fn run_workspace_status_command(
         stderr,
         timed_out,
     })
+}
+
+fn run_workspace_status_command_owned_with_timeout(
+    root: &Path,
+    program: &str,
+    args: &[String],
+    timeout: std::time::Duration,
+) -> Result<WorkspaceStatusCommandOutput, String> {
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_workspace_status_command_with_timeout(root, program, &arg_refs, timeout)
 }
 
 fn workspace_status_error(output: &WorkspaceStatusCommandOutput) -> String {
@@ -4559,6 +5181,260 @@ fn relative_status_path_from_root(root: &Path, path: &str) -> String {
     }
 
     normalize_vcs_status_path(normalized.split('#').next().unwrap_or(normalized.as_str()))
+}
+
+#[derive(Clone, Debug)]
+struct P4WhereMapping {
+    depot_prefix: String,
+    client_prefix: String,
+    local_prefix: String,
+}
+
+fn sort_p4_where_mappings(mappings: &mut [P4WhereMapping]) {
+    mappings.sort_by(|a, b| {
+        let a_len = a
+            .depot_prefix
+            .len()
+            .max(a.client_prefix.len())
+            .max(a.local_prefix.len());
+        let b_len = b
+            .depot_prefix
+            .len()
+            .max(b.client_prefix.len())
+            .max(b.local_prefix.len());
+        b_len.cmp(&a_len)
+    });
+}
+
+fn dedupe_sort_p4_where_mappings(mappings: &mut Vec<P4WhereMapping>) {
+    let mut seen = HashSet::new();
+    mappings.retain(|mapping| {
+        seen.insert(format!(
+            "{}\0{}\0{}",
+            mapping.depot_prefix, mapping.client_prefix, mapping.local_prefix
+        ))
+    });
+    sort_p4_where_mappings(mappings);
+}
+
+fn split_p4_where_line(line: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in line.chars() {
+        if ch == '"' {
+            in_quotes = !in_quotes;
+            continue;
+        }
+        if ch.is_whitespace() && !in_quotes {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(ch);
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
+}
+
+fn strip_p4_revision(path: &str) -> &str {
+    path.split('#').next().unwrap_or(path)
+}
+
+fn normalize_p4_mapping_path(path: &str) -> String {
+    strip_p4_revision(path.trim().trim_matches('"'))
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn p4_mapping_prefix(path: &str) -> String {
+    let normalized = normalize_p4_mapping_path(path);
+    ["/...", "/.", "/*"]
+        .iter()
+        .find_map(|suffix| normalized.strip_suffix(suffix).map(str::to_string))
+        .unwrap_or(normalized)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn parse_p4_where_mappings(root: &Path, stdout: &str) -> Vec<P4WhereMapping> {
+    let mut mappings = Vec::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("... ") {
+            continue;
+        }
+        let tokens = split_p4_where_line(trimmed);
+        if tokens.len() < 3 {
+            continue;
+        }
+
+        let depot_prefix = p4_mapping_prefix(&tokens[0]);
+        let client_prefix = p4_mapping_prefix(&tokens[1]);
+        let local_prefix = p4_mapping_prefix(&tokens[2..].join(" "));
+        if depot_prefix.starts_with('-')
+            || client_prefix.starts_with('-')
+            || local_prefix.trim().is_empty()
+        {
+            continue;
+        }
+
+        mappings.push(P4WhereMapping {
+            depot_prefix,
+            client_prefix,
+            local_prefix,
+        });
+    }
+
+    if mappings.is_empty() {
+        mappings.push(P4WhereMapping {
+            depot_prefix: String::new(),
+            client_prefix: String::new(),
+            local_prefix: normalize_p4_mapping_path(&root.to_string_lossy()),
+        });
+    }
+
+    dedupe_sort_p4_where_mappings(&mut mappings);
+    mappings
+}
+
+fn p4_info_value(stdout: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    stdout.lines().find_map(|line| {
+        let trimmed = line.trim();
+        trimmed
+            .strip_prefix(&prefix)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn parse_p4_info_mapping(stdout: &str) -> Option<P4WhereMapping> {
+    let local_root = p4_info_value(stdout, "Client root")?;
+    if local_root.trim().is_empty() {
+        return None;
+    }
+
+    let depot_prefix = p4_info_value(stdout, "Client stream")
+        .map(|value| p4_mapping_prefix(&value))
+        .unwrap_or_default();
+    let client_prefix = p4_info_value(stdout, "Client name")
+        .map(|value| format!("//{}", value.trim().trim_matches('/')))
+        .map(|value| p4_mapping_prefix(&value))
+        .unwrap_or_default();
+
+    Some(P4WhereMapping {
+        depot_prefix,
+        client_prefix,
+        local_prefix: p4_mapping_prefix(&local_root),
+    })
+}
+
+fn strip_normalized_prefix(path: &str, prefix: &str, case_insensitive: bool) -> Option<String> {
+    let path = path.trim_end_matches('/');
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        return None;
+    }
+
+    let matches_exact = if case_insensitive {
+        path.eq_ignore_ascii_case(prefix)
+    } else {
+        path == prefix
+    };
+    if matches_exact {
+        return Some(String::new());
+    }
+
+    let prefix_with_slash = format!("{prefix}/");
+    let matches_prefix = if case_insensitive {
+        path.to_ascii_lowercase()
+            .starts_with(&prefix_with_slash.to_ascii_lowercase())
+    } else {
+        path.starts_with(&prefix_with_slash)
+    };
+    if matches_prefix {
+        return Some(path[prefix_with_slash.len()..].to_string());
+    }
+
+    None
+}
+
+fn local_status_path_from_root(root: &Path, path: &str) -> Option<String> {
+    let normalized = normalize_p4_mapping_path(path);
+    let root_text = normalize_p4_mapping_path(&root.to_string_lossy());
+    if let Some(relative) = strip_normalized_prefix(&normalized, &root_text, cfg!(windows)) {
+        return Some(normalize_vcs_status_path(&relative));
+    }
+
+    if let Ok(canonical_root) = std::fs::canonicalize(root) {
+        let canonical_root_text = normalize_p4_mapping_path(&canonical_root.to_string_lossy());
+        if let Some(relative) =
+            strip_normalized_prefix(&normalized, &canonical_root_text, cfg!(windows))
+        {
+            return Some(normalize_vcs_status_path(&relative));
+        }
+    }
+
+    None
+}
+
+fn p4_mapping_suffix_to_workspace_relative(
+    root: &Path,
+    local_prefix: &str,
+    suffix: &str,
+) -> Option<String> {
+    let local = if suffix.trim().is_empty() {
+        local_prefix.to_string()
+    } else {
+        format!("{}/{}", local_prefix.trim_end_matches('/'), suffix)
+    };
+    local_status_path_from_root(root, &local)
+}
+
+fn relative_p4_status_path_from_root(
+    root: &Path,
+    path: &str,
+    mappings: &[P4WhereMapping],
+) -> String {
+    let normalized = normalize_p4_mapping_path(path);
+
+    if normalized.starts_with("//") {
+        for mapping in mappings {
+            if let Some(suffix) = strip_normalized_prefix(&normalized, &mapping.depot_prefix, false)
+            {
+                if let Some(relative) =
+                    p4_mapping_suffix_to_workspace_relative(root, &mapping.local_prefix, &suffix)
+                {
+                    return relative;
+                }
+            }
+            if let Some(suffix) =
+                strip_normalized_prefix(&normalized, &mapping.client_prefix, false)
+            {
+                if let Some(relative) =
+                    p4_mapping_suffix_to_workspace_relative(root, &mapping.local_prefix, &suffix)
+                {
+                    return relative;
+                }
+            }
+        }
+        return normalized;
+    }
+
+    if let Some(relative) = local_status_path_from_root(root, &normalized) {
+        return relative;
+    }
+
+    relative_status_path_from_root(root, &normalized)
 }
 
 fn workspace_change_file_from_status(
@@ -4962,7 +5838,11 @@ fn parse_svn_workspace_changes(stdout: &str) -> Vec<WorkspaceChangeFile> {
     files
 }
 
-fn parse_p4_workspace_changes(root: &Path, stdout: &str) -> Vec<WorkspaceChangeFile> {
+fn parse_p4_workspace_changes(
+    root: &Path,
+    stdout: &str,
+    mappings: &[P4WhereMapping],
+) -> Vec<WorkspaceChangeFile> {
     let mut files = Vec::new();
     for line in stdout.lines() {
         let trimmed = line.trim();
@@ -5000,12 +5880,311 @@ fn parse_p4_workspace_changes(root: &Path, stdout: &str) -> Vec<WorkspaceChangeF
             .split_once(" - ")
             .map(|(path, _)| path)
             .unwrap_or(trimmed);
-        let path = relative_status_path_from_root(root, path_text);
+        let path = relative_p4_status_path_from_root(root, path_text, mappings);
         if let Some(file) = workspace_change_file_from_status(path, None, status) {
             files.push(file);
         }
     }
     files
+}
+
+struct P4CommandScan {
+    files: Vec<WorkspaceChangeFile>,
+    truncated: bool,
+}
+
+fn p4_normalize_file_spec(path: &str) -> String {
+    normalize_vcs_status_path(path)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn p4_child_specs_for_dir(root: &Path, relative_dir: &str) -> Vec<String> {
+    let normalized_dir = p4_normalize_file_spec(relative_dir);
+    let dir = if normalized_dir.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(normalized_dir.replace('/', std::path::MAIN_SEPARATOR_STR))
+    };
+
+    let mut specs = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return specs,
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.trim().is_empty() {
+            continue;
+        }
+        let relative = if normalized_dir.is_empty() {
+            p4_normalize_file_spec(&name)
+        } else {
+            p4_normalize_file_spec(&format!("{normalized_dir}/{name}"))
+        };
+        if relative.is_empty() {
+            continue;
+        }
+
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            specs.push(format!("{relative}/..."));
+        } else if file_type.is_file() {
+            specs.push(relative);
+        }
+    }
+
+    specs.sort();
+    specs
+}
+
+fn p4_workspace_status_specs(root: &Path) -> Vec<String> {
+    let mut dir_specs = Vec::new();
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return vec!["...".to_string()],
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.trim().is_empty() {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            dir_specs.push(format!("{}/...", p4_normalize_file_spec(&name)));
+        }
+    }
+
+    dir_specs.sort();
+    let mut specs = vec!["*".to_string()];
+    specs.extend(dir_specs);
+    specs
+}
+
+fn p4_workspace_root_status_specs() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+fn p4_child_specs_for_timed_out_spec(root: &Path, spec: &str) -> Vec<String> {
+    let normalized = p4_normalize_file_spec(spec);
+    if normalized == "..." {
+        return p4_child_specs_for_dir(root, "");
+    }
+    let Some(dir) = normalized.strip_suffix("/...") else {
+        return Vec::new();
+    };
+    p4_child_specs_for_dir(root, dir)
+}
+
+fn p4_status_args(base_args: &[&str], specs: &[String]) -> Vec<String> {
+    base_args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .chain(specs.iter().cloned())
+        .collect()
+}
+
+fn p4_error_is_outside_client(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("not under client's root") || lower.contains("file(s) not in client view")
+}
+
+fn p4_error_is_empty_result(command: &str, stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("file(s) not opened")
+        || lower.contains("not opened on this client")
+        || lower.contains("no file(s) to reconcile")
+        || command == "status"
+}
+
+fn p4_push_spec_batches(queue: &mut VecDeque<Vec<String>>, specs: Vec<String>) {
+    for chunk in specs.chunks(P4_STATUS_SPEC_BATCH_SIZE) {
+        queue.push_back(chunk.to_vec());
+    }
+}
+
+fn p4_status_command_timeout_for_elapsed(
+    elapsed: std::time::Duration,
+) -> Option<std::time::Duration> {
+    let total = std::time::Duration::from_millis(P4_STATUS_TOTAL_TIMEOUT_MS);
+    if elapsed >= total {
+        return None;
+    }
+    let remaining = total.saturating_sub(elapsed);
+    if remaining.is_zero() {
+        return None;
+    }
+    let command = std::time::Duration::from_millis(WORKSPACE_STATUS_COMMAND_TIMEOUT_MS);
+    Some(if remaining < command {
+        remaining
+    } else {
+        command
+    })
+}
+
+fn p4_split_or_mark_truncated(
+    root: &Path,
+    queue: &mut VecDeque<Vec<String>>,
+    specs: Vec<String>,
+) -> bool {
+    if specs.len() > 1 {
+        for spec in specs {
+            queue.push_back(vec![spec]);
+        }
+        return false;
+    }
+
+    let Some(spec) = specs.first() else {
+        return false;
+    };
+    let children = p4_child_specs_for_timed_out_spec(root, spec);
+    if children.is_empty() {
+        true
+    } else {
+        p4_push_spec_batches(queue, children);
+        false
+    }
+}
+
+fn p4_collect_command_changes(
+    root: &Path,
+    base_args: &[&str],
+    initial_specs: &[String],
+    mappings: &[P4WhereMapping],
+) -> Result<P4CommandScan, String> {
+    let command = base_args.first().copied().unwrap_or_default();
+    let mut files = Vec::new();
+    let mut truncated = false;
+    let mut spec_visits = 0_usize;
+    let mut queue: VecDeque<Vec<String>> = VecDeque::new();
+    let started_at = std::time::Instant::now();
+    p4_push_spec_batches(&mut queue, initial_specs.to_vec());
+
+    while let Some(specs) = queue.pop_front() {
+        if specs.is_empty() {
+            continue;
+        }
+        if spec_visits >= P4_STATUS_MAX_SPEC_VISITS {
+            truncated = true;
+            break;
+        }
+        spec_visits = spec_visits.saturating_add(specs.len());
+
+        let args = p4_status_args(base_args, &specs);
+        let Some(command_timeout) = p4_status_command_timeout_for_elapsed(started_at.elapsed())
+        else {
+            truncated = true;
+            break;
+        };
+        let output = match run_workspace_status_command_owned_with_timeout(
+            root,
+            "p4",
+            &args,
+            command_timeout,
+        ) {
+            Ok(output) => output,
+            Err(err) => return Err(format!("P4 状态读取失败: {err}")),
+        };
+
+        if output.timed_out {
+            if p4_status_command_timeout_for_elapsed(started_at.elapsed()).is_none() {
+                truncated = true;
+                break;
+            }
+            truncated |= p4_split_or_mark_truncated(root, &mut queue, specs);
+            continue;
+        }
+
+        if !output.success {
+            if p4_error_is_outside_client(&output.stderr) {
+                if specs.len() > 1 {
+                    for spec in specs {
+                        queue.push_back(vec![spec]);
+                    }
+                }
+                continue;
+            }
+            if p4_error_is_empty_result(command, &output.stderr) {
+                continue;
+            }
+            if !files.is_empty() {
+                truncated = true;
+                continue;
+            }
+            return Err(format!(
+                "P4 状态读取失败: {}",
+                workspace_status_error(&output)
+            ));
+        }
+
+        files.extend(parse_p4_workspace_changes(root, &output.stdout, mappings));
+        if P4_STATUS_BATCH_PAUSE_MS > 0 && !queue.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(P4_STATUS_BATCH_PAUSE_MS));
+        }
+    }
+
+    Ok(P4CommandScan { files, truncated })
+}
+
+fn p4_workspace_where_mappings(
+    root: &Path,
+    info_stdout: &str,
+) -> Result<Option<Vec<P4WhereMapping>>, String> {
+    let mut info_mappings = parse_p4_info_mapping(info_stdout)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut saw_outside_client = false;
+    let mut saw_non_outside_failure = false;
+    let mut last_error = None;
+
+    for args in P4_WHERE_MAPPING_COMMANDS {
+        let output = match run_workspace_status_command(root, "p4", args) {
+            Ok(output) => output,
+            Err(err) => {
+                saw_non_outside_failure = true;
+                last_error = Some(format!("P4 工作区映射检查失败: {err}"));
+                continue;
+            }
+        };
+        if output.timed_out {
+            saw_non_outside_failure = true;
+            last_error = Some("P4 工作区映射检查超时".to_string());
+            continue;
+        }
+        if output.success {
+            let mut mappings = parse_p4_where_mappings(root, &output.stdout);
+            mappings.append(&mut info_mappings);
+            dedupe_sort_p4_where_mappings(&mut mappings);
+            return Ok(Some(mappings));
+        }
+        if p4_error_is_outside_client(&output.stderr) {
+            saw_outside_client = true;
+            continue;
+        }
+        saw_non_outside_failure = true;
+        last_error = Some(format!(
+            "P4 工作区映射检查失败: {}",
+            workspace_status_error(&output)
+        ));
+    }
+
+    if saw_outside_client && !saw_non_outside_failure {
+        return Ok(None);
+    }
+    if !info_mappings.is_empty() {
+        dedupe_sort_p4_where_mappings(&mut info_mappings);
+        return Ok(Some(info_mappings));
+    }
+    if let Some(err) = last_error {
+        return Err(err);
+    }
+    Ok(Some(parse_p4_where_mappings(root, "")))
 }
 
 fn dedupe_workspace_status_files(files: Vec<WorkspaceChangeFile>) -> Vec<WorkspaceChangeFile> {
@@ -5032,6 +6211,7 @@ fn workspace_changes_from_status_files(
     source: &str,
     files: Vec<WorkspaceChangeFile>,
     source_truncated: bool,
+    scan_scope: &str,
 ) -> WorkspaceChanges {
     let mut files = dedupe_workspace_status_files(files);
     let truncated = truncate_workspace_changes(&mut files);
@@ -5041,10 +6221,34 @@ fn workspace_changes_from_status_files(
         source: source.to_string(),
         files,
         truncated: truncated || source_truncated,
+        scan_scope: Some(scan_scope.to_string()),
     }
 }
 
-fn git_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+fn workspace_status_path_is_root_child(path: &str) -> bool {
+    let normalized = normalize_vcs_status_path(path);
+    !normalized.is_empty() && !normalized.contains('/')
+}
+
+fn workspace_status_file_touches_root(file: &WorkspaceChangeFile) -> bool {
+    workspace_status_path_is_root_child(&file.path)
+        || file
+            .old_path
+            .as_deref()
+            .map(workspace_status_path_is_root_child)
+            .unwrap_or(false)
+}
+
+fn root_workspace_status_files(files: Vec<WorkspaceChangeFile>) -> Vec<WorkspaceChangeFile> {
+    files
+        .into_iter()
+        .filter(workspace_status_file_touches_root)
+        .collect()
+}
+
+fn git_workspace_status_files(
+    root: &Path,
+) -> Option<Result<(String, Vec<WorkspaceChangeFile>), String>> {
     let probe =
         match run_workspace_status_command(root, "git", &["rev-parse", "--is-inside-work-tree"]) {
             Ok(output) => output,
@@ -5087,7 +6291,41 @@ fn git_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>
         )));
     }
 
-    let status_files = parse_git_workspace_changes(&status.stdout, &prefix);
+    Some(Ok((
+        prefix.clone(),
+        parse_git_workspace_changes(&status.stdout, &prefix),
+    )))
+}
+
+fn git_workspace_vcs_status(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+    let (_, files) = match git_workspace_status_files(root)? {
+        Ok(result) => result,
+        Err(err) => return Some(Err(err)),
+    };
+    Some(Ok(workspace_changes_from_status_files(
+        root, "git", files, false, "full",
+    )))
+}
+
+fn git_workspace_vcs_status_shallow(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+    let (_, files) = match git_workspace_status_files(root)? {
+        Ok(result) => result,
+        Err(err) => return Some(Err(err)),
+    };
+    Some(Ok(workspace_changes_from_status_files(
+        root,
+        "git",
+        root_workspace_status_files(files),
+        false,
+        "root",
+    )))
+}
+
+fn git_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+    let (prefix, status_files) = match git_workspace_status_files(root)? {
+        Ok(result) => result,
+        Err(err) => return Some(Err(err)),
+    };
     let (diff_files, diff_truncated) = match git_workspace_diff_changes(root, &prefix) {
         Ok(files) => (files, false),
         Err(_) => (Vec::new(), true),
@@ -5098,6 +6336,7 @@ fn git_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>
         "git",
         files,
         diff_truncated,
+        "full",
     )))
 }
 
@@ -5130,11 +6369,26 @@ fn svn_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>
 
     let files = parse_svn_workspace_changes(&status.stdout);
     Some(Ok(workspace_changes_from_status_files(
-        root, "svn", files, false,
+        root, "svn", files, false, "full",
     )))
 }
 
-fn p4_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+fn svn_workspace_changes_shallow(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+    let mut changes = match svn_workspace_changes(root)? {
+        Ok(changes) => changes,
+        Err(err) => return Some(Err(err)),
+    };
+    changes.files = root_workspace_status_files(changes.files);
+    changes.generated_at_ms = now_ms();
+    changes.scan_scope = Some("root".to_string());
+    Some(Ok(changes))
+}
+
+fn p4_workspace_changes_for_specs(
+    root: &Path,
+    specs: Vec<String>,
+    scan_scope: &str,
+) -> Option<Result<WorkspaceChanges, String>> {
     let probe = match run_workspace_status_command(root, "p4", &["info"]) {
         Ok(output) => output,
         Err(_) => return None,
@@ -5148,53 +6402,90 @@ fn p4_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>>
 
     let mut files = Vec::new();
     let mut truncated = false;
-    for args in [
-        &["status", "..."][..],
-        &["reconcile", "-n", "-ead", "..."][..],
-        &["opened", "..."][..],
-    ] {
-        let output = match run_workspace_status_command(root, "p4", args) {
-            Ok(output) => output,
-            Err(err) => return Some(Err(format!("P4 状态读取失败: {err}"))),
-        };
-        if output.timed_out {
-            return Some(Err("P4 状态收集超时".to_string()));
-        }
-        if !output.success {
-            let stderr = output.stderr.to_ascii_lowercase();
-            if stderr.contains("not under client's root")
-                || stderr.contains("file(s) not in client view")
-            {
-                return None;
+
+    let mappings = match p4_workspace_where_mappings(root, &probe.stdout) {
+        Ok(Some(mappings)) => mappings,
+        Ok(None) => return None,
+        Err(err) => return Some(Err(err)),
+    };
+
+    // Observer mode: read pending state and preview reconcile only. Never opens files.
+    for args in P4_OBSERVER_STATUS_COMMANDS {
+        match p4_collect_command_changes(root, args, &specs, &mappings) {
+            Ok(scan) => {
+                files.extend(scan.files);
+                truncated |= scan.truncated;
             }
-            if stderr.contains("file(s) not opened")
-                || stderr.contains("not opened on this client")
-                || stderr.contains("no file(s) to reconcile")
-                || args.first() == Some(&"status")
-            {
-                continue;
-            }
-            if !files.is_empty() {
+            Err(err) => {
+                if files.is_empty() {
+                    return Some(Err(err));
+                }
                 truncated = true;
-                continue;
             }
-            return Some(Err(format!(
-                "P4 状态读取失败: {}",
-                workspace_status_error(&output)
-            )));
         }
-        files.extend(parse_p4_workspace_changes(root, &output.stdout));
     }
 
     Some(Ok(workspace_changes_from_status_files(
-        root, "p4", files, truncated,
+        root, "p4", files, truncated, scan_scope,
     )))
+}
+
+fn p4_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+    p4_workspace_changes_for_specs(root, p4_workspace_status_specs(root), "full")
+}
+
+fn p4_workspace_changes_shallow(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+    p4_workspace_changes_for_specs(root, p4_workspace_root_status_specs(), "root")
 }
 
 fn vcs_workspace_changes(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
     git_workspace_changes(root)
         .or_else(|| svn_workspace_changes(root))
         .or_else(|| p4_workspace_changes(root))
+}
+
+fn vcs_workspace_status(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+    git_workspace_vcs_status(root)
+        .or_else(|| svn_workspace_changes(root))
+        .or_else(|| p4_workspace_changes(root))
+}
+
+fn vcs_workspace_status_shallow(root: &Path) -> Option<Result<WorkspaceChanges, String>> {
+    git_workspace_vcs_status_shallow(root)
+        .or_else(|| svn_workspace_changes_shallow(root))
+        .or_else(|| p4_workspace_changes_shallow(root))
+}
+
+fn workspace_vcs_status_blocking(root_path: String) -> Result<WorkspaceChanges, String> {
+    let (root, _) = workspace_tree_resolve_dir(&root_path, "")?;
+    if let Some(status) = vcs_workspace_status(&root) {
+        return status;
+    }
+
+    Ok(WorkspaceChanges {
+        root_path: display_preview_path(&root),
+        generated_at_ms: now_ms(),
+        source: "none".to_string(),
+        files: Vec::new(),
+        truncated: false,
+        scan_scope: Some("full".to_string()),
+    })
+}
+
+fn workspace_vcs_status_shallow_blocking(root_path: String) -> Result<WorkspaceChanges, String> {
+    let (root, _) = workspace_tree_resolve_dir(&root_path, "")?;
+    if let Some(status) = vcs_workspace_status_shallow(&root) {
+        return status;
+    }
+
+    Ok(WorkspaceChanges {
+        root_path: display_preview_path(&root),
+        generated_at_ms: now_ms(),
+        source: "none".to_string(),
+        files: Vec::new(),
+        truncated: false,
+        scan_scope: Some("root".to_string()),
+    })
 }
 
 fn workspace_changes_baseline_blocking(
@@ -5285,6 +6576,7 @@ fn workspace_changes_blocking(
         source: "snapshot".to_string(),
         files,
         truncated: truncated || baseline.truncated || current_truncated,
+        scan_scope: Some("full".to_string()),
     };
     let cache_file = workspace_change_cache_file(&root, &cache_key, "changes");
     write_json_cache(&cache_file, &changes)?;
@@ -5325,6 +6617,20 @@ async fn workspace_changes(
     })
     .await
     .map_err(|e| format!("会话改动读取任务失败: {e}"))?
+}
+
+#[tauri::command]
+async fn workspace_vcs_status(root_path: String) -> Result<WorkspaceChanges, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace_vcs_status_blocking(root_path))
+        .await
+        .map_err(|e| format!("VCS 状态读取任务失败: {e}"))?
+}
+
+#[tauri::command]
+async fn workspace_vcs_status_shallow(root_path: String) -> Result<WorkspaceChanges, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace_vcs_status_shallow_blocking(root_path))
+        .await
+        .map_err(|e| format!("VCS 状态读取任务失败: {e}"))?
 }
 
 #[tauri::command]
@@ -7746,6 +9052,124 @@ fn write_project_mcp_settings(cwd: Option<&str>) -> Result<Option<TempFileGuard>
     Ok(Some(TempFileGuard::new(path)))
 }
 
+fn gemini_project_mcp_settings_json(cwd: Option<&str>) -> Option<serde_json::Value> {
+    let mut settings = project_mcp_settings_json(cwd)?;
+    trust_gemini_mcp_servers(&mut settings);
+    Some(settings)
+}
+
+fn trust_gemini_mcp_servers(settings: &mut serde_json::Value) {
+    if let Some(servers) = settings
+        .get_mut("mcpServers")
+        .and_then(|value| value.as_object_mut())
+    {
+        for server in servers.values_mut() {
+            if let Some(obj) = server.as_object_mut() {
+                obj.insert("trust".to_string(), serde_json::Value::Bool(true));
+            }
+        }
+    }
+}
+
+fn write_gemini_project_mcp_settings(cwd: Option<&str>) -> Result<Option<TempFileGuard>, String> {
+    let Some(settings) = gemini_project_mcp_settings_json(cwd) else {
+        return Ok(None);
+    };
+    let path = temp_output_path_for_cwd(cwd, "freeultracode-gemini-project-mcp", "json");
+    let bytes =
+        serde_json::to_vec(&settings).map_err(|e| format!("生成 Gemini MCP 配置失败: {e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("写入 Gemini MCP 配置失败: {e}"))?;
+    Ok(Some(TempFileGuard::new(path)))
+}
+
+fn toml_literal_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+fn toml_literal_string_array(values: &[String]) -> String {
+    serde_json::to_string(values).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn codex_config_key_segment(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        value.to_string()
+    } else {
+        toml_literal_string(value)
+    }
+}
+
+fn append_codex_project_mcp_config_args_from_settings(
+    args: &mut Vec<String>,
+    settings: &serde_json::Value,
+) {
+    let Some(servers) = settings
+        .get("mcpServers")
+        .and_then(|value| value.as_object())
+    else {
+        return;
+    };
+
+    for (id, server) in servers {
+        let Some(command) = server
+            .get("command")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let server_key = codex_config_key_segment(id);
+        args.push("-c".into());
+        args.push(format!(
+            "mcp_servers.{server_key}.command={}",
+            toml_literal_string(command)
+        ));
+
+        let server_args = server
+            .get("args")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(ToString::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        args.push("-c".into());
+        args.push(format!(
+            "mcp_servers.{server_key}.args={}",
+            toml_literal_string_array(&server_args)
+        ));
+
+        if let Some(env) = server.get("env").and_then(|value| value.as_object()) {
+            for (key, value) in env {
+                let Some(value) = value.as_str() else {
+                    continue;
+                };
+                args.push("-c".into());
+                args.push(format!(
+                    "mcp_servers.{server_key}.env.{}={}",
+                    codex_config_key_segment(key),
+                    toml_literal_string(value)
+                ));
+            }
+        }
+    }
+}
+
+fn append_codex_project_mcp_config_args(args: &mut Vec<String>, cwd: Option<&str>) {
+    if !mcp_enabled() {
+        return;
+    }
+    if let Some(settings) = project_mcp_settings_json(cwd) {
+        append_codex_project_mcp_config_args_from_settings(args, &settings);
+    }
+}
+
 static CLAUDE_BARE_SUPPORT_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
 
 fn claude_help_supports_bare(help_text: &str) -> bool {
@@ -8060,15 +9484,104 @@ fn tool_result_raw(block: &serde_json::Value) -> String {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct CodexLiteEvent {
+    method: Option<String>,
+    #[serde(rename = "type")]
+    event_type: Option<String>,
+    item: Option<CodexLiteItem>,
+    params: Option<CodexLiteParams>,
+    turn: Option<CodexLiteTurn>,
+    status: Option<String>,
+    usage: Option<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct CodexLiteParams {
+    item: Option<CodexLiteItem>,
+    turn: Option<CodexLiteTurn>,
+    usage: Option<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct CodexLiteTurn {
+    status: Option<String>,
+    usage: Option<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct CodexLiteItem {
+    #[serde(rename = "type")]
+    item_type: Option<String>,
+    text: Option<String>,
+    command: Option<String>,
+    name: Option<String>,
+    path: Option<String>,
+    file_path: Option<String>,
+    query: Option<String>,
+    status: Option<String>,
+}
+
+impl CodexLiteEvent {
+    fn kind(&self) -> Option<&str> {
+        self.method.as_deref().or(self.event_type.as_deref())
+    }
+
+    fn completed_item(&self) -> Option<&CodexLiteItem> {
+        match self.kind() {
+            Some("item.completed") | Some("item/completed") => self
+                .item
+                .as_ref()
+                .or_else(|| self.params.as_ref().and_then(|p| p.item.as_ref())),
+            _ => None,
+        }
+    }
+
+    fn turn_completion_status(&self) -> Option<String> {
+        match self.kind() {
+            Some("turn.completed") | Some("turn/completed") | Some("turn_complete") => {
+                let status = self
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.turn.as_ref())
+                    .and_then(|t| t.status.as_deref())
+                    .or_else(|| self.turn.as_ref().and_then(|t| t.status.as_deref()))
+                    .or(self.status.as_deref())
+                    .unwrap_or("completed");
+                Some(status.to_string())
+            }
+            _ => None,
+        }
+    }
+
+    fn turn_usage(&self) -> Option<&serde_json::Value> {
+        match self.kind() {
+            Some("turn.completed") | Some("turn/completed") | Some("turn_complete") => self
+                .usage
+                .as_ref()
+                .or_else(|| self.params.as_ref().and_then(|p| p.usage.as_ref()))
+                .or_else(|| {
+                    self.params
+                        .as_ref()
+                        .and_then(|p| p.turn.as_ref())
+                        .and_then(|t| t.usage.as_ref())
+                })
+                .or_else(|| self.turn.as_ref().and_then(|t| t.usage.as_ref())),
+            _ => None,
+        }
+    }
+}
+
 /// Codex CLI JSONL uses `item.completed` events rather than Claude's
 /// `assistant` / `result` events. Emit readable agent text and a compact tool
-/// breadcrumb when a tool-like item appears.
-fn codex_progress_line(item: &serde_json::Value) -> Option<String> {
-    let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+/// breadcrumb when a tool-like item appears. Keep this on the lightweight item
+/// shape so large tool output fields are skipped by serde instead of allocated.
+fn codex_progress_line(item: &CodexLiteItem) -> Option<String> {
+    let item_type = item.item_type.as_deref().unwrap_or("");
     if item_type == "agent_message" {
         return item
-            .get("text")
-            .and_then(|t| t.as_str())
+            .text
+            .as_deref()
             .filter(|t| !t.is_empty())
             .map(|t| t.to_string());
     }
@@ -8077,72 +9590,25 @@ fn codex_progress_line(item: &serde_json::Value) -> Option<String> {
         return None;
     }
 
-    let detail = [
-        "command",
-        "name",
-        "path",
-        "file_path",
-        "query",
-        "text",
-        "status",
-    ]
-    .iter()
-    .find_map(|k| {
-        item.get(*k)
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.replace(['\n', '\r'], " "))
-    })
-    .unwrap_or_default();
+    let detail = item
+        .command
+        .as_deref()
+        .or(item.name.as_deref())
+        .or(item.path.as_deref())
+        .or(item.file_path.as_deref())
+        .or(item.query.as_deref())
+        .or(item.text.as_deref())
+        .or(item.status.as_deref())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.replace(['\n', '\r'], " "))
+        .unwrap_or_default();
 
     let detail: String = detail.chars().take(200).collect();
     if detail.is_empty() {
         Some(format!("\n🔧 {item_type}\n"))
     } else {
         Some(format!("\n🔧 {item_type}: {detail}\n"))
-    }
-}
-
-fn codex_event_kind(event: &serde_json::Value) -> Option<&str> {
-    event
-        .get("method")
-        .and_then(|m| m.as_str())
-        .or_else(|| event.get("type").and_then(|t| t.as_str()))
-}
-
-fn codex_completed_item(event: &serde_json::Value) -> Option<&serde_json::Value> {
-    match codex_event_kind(event) {
-        Some("item.completed") | Some("item/completed") => {
-            event.get("item").or_else(|| event.pointer("/params/item"))
-        }
-        _ => None,
-    }
-}
-
-fn codex_turn_completion_status(event: &serde_json::Value) -> Option<String> {
-    match codex_event_kind(event) {
-        Some("turn.completed") | Some("turn/completed") | Some("turn_complete") => {
-            let status = event
-                .pointer("/params/turn/status")
-                .or_else(|| event.pointer("/turn/status"))
-                .or_else(|| event.get("status"))
-                .and_then(|s| s.as_str())
-                .unwrap_or("completed");
-            Some(status.to_string())
-        }
-        _ => None,
-    }
-}
-
-fn codex_turn_usage(event: &serde_json::Value) -> Option<&serde_json::Value> {
-    match codex_event_kind(event) {
-        Some("turn.completed") | Some("turn/completed") | Some("turn_complete") => event
-            .get("usage")
-            .or_else(|| event.pointer("/params/usage"))
-            .or_else(|| event.pointer("/params/turn/usage"))
-            .or_else(|| event.pointer("/turn/usage")),
-        _ => None,
     }
 }
 
@@ -8173,7 +9639,12 @@ fn claude_message_usage(event: &serde_json::Value) -> Option<serde_json::Value> 
         "cache_creation_input_tokens",
     ]
     .iter()
-    .any(|key| usage.get(*key).and_then(|v| v.as_u64()).is_some_and(|n| n > 0));
+    .any(|key| {
+        usage
+            .get(*key)
+            .and_then(|v| v.as_u64())
+            .is_some_and(|n| n > 0)
+    });
     if !has_tokens {
         return None;
     }
@@ -8309,6 +9780,7 @@ async fn ai_cli(
         };
         let protocol = cli_runtime::adapter_protocol(&adapter);
         let is_codex = protocol == "codex";
+        let is_gemini = protocol == "gemini";
         let codex_last_message_path = if is_codex {
             Some(temp_output_path_for_cwd(
                 cwd.as_deref(),
@@ -8332,6 +9804,7 @@ async fn ai_cli(
         let mut workdir: Option<std::path::PathBuf> = None;
         let mut disable_autoupdater = false;
         let mut temp_files: Vec<TempFileGuard> = Vec::new();
+        let mut gemini_system_settings_path: Option<String> = None;
 
         if is_codex {
             // Codex's non-interactive surface is `codex exec`, and its JSON
@@ -8350,6 +9823,7 @@ async fn ai_cli(
             }
 
             args.push("exec".into());
+            append_codex_project_mcp_config_args(&mut args, cwd.as_deref());
             args.push("--json".into());
             args.push("--skip-git-repo-check".into());
 
@@ -8390,6 +9864,55 @@ async fn ai_cli(
                 args.push(path.to_string_lossy().to_string());
             }
             args.push("-".into());
+        } else if is_gemini {
+            // Gemini CLI has its own headless/MCP flags. The prompt still goes
+            // through stdin; an empty --prompt enables non-interactive mode
+            // without hitting command-line length limits.
+            args.push("--prompt".into());
+            args.push(String::new());
+            args.push("--output-format".into());
+            args.push("stream-json".into());
+
+            if mcp_enabled() {
+                if let Some(project_mcp_file) =
+                    write_gemini_project_mcp_settings(cwd.as_deref())?
+                {
+                    gemini_system_settings_path =
+                        Some(project_mcp_file.path().to_string_lossy().to_string());
+                    temp_files.push(project_mcp_file);
+                }
+            }
+
+            if let Some(m) = model
+                .as_deref()
+                .filter(|m| cli_runtime::should_pass_model(&adapter, m))
+            {
+                args.push("--model".into());
+                args.push(m.to_string());
+            }
+
+            match permission.as_deref().unwrap_or("full") {
+                "readonly" => {
+                    args.push("--approval-mode".into());
+                    args.push("plan".into());
+                }
+                "ask" => {}
+                _ => {
+                    args.push("--approval-mode".into());
+                    args.push("yolo".into());
+                }
+            }
+
+            if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                let p = std::path::Path::new(dir);
+                if p.is_dir() {
+                    workdir = Some(p.to_path_buf());
+                }
+            }
+            for dir in &extra_workspace_paths {
+                args.push("--include-directories".into());
+                args.push(dir.clone());
+            }
         } else {
             // The prompt is fed via stdin (not a positional arg) so large
             // aggregation prompts can't hit the OS command-line length limit
@@ -8500,6 +10023,9 @@ async fn ai_cli(
         if disable_autoupdater {
             cmd.env("DISABLE_AUTOUPDATER", "1");
         }
+        if let Some(path) = gemini_system_settings_path.as_deref() {
+            cmd.env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", path);
+        }
         if let Some(dir) = workdir.as_ref() {
             cmd.current_dir(dir);
         }
@@ -8530,6 +10056,7 @@ async fn ai_cli(
         let app2 = app.clone();
         let run2 = run_id.clone();
         let parse_codex = is_codex;
+        let parse_gemini = is_gemini;
         let progress_model_hint2 = progress_model_hint.clone();
         let codex_turn_status = Arc::new(Mutex::new(None::<String>));
         let codex_turn_status_reader = Arc::clone(&codex_turn_status);
@@ -8559,34 +10086,38 @@ async fn ai_cli(
             // tens of seconds). Emitted at most once per run.
             let mut requesting_done = false;
             if let Some(o) = stdout {
-                let reader = std::io::BufReader::new(o);
-                for line in reader.lines() {
-                    let line = match line {
-                        Ok(l) => l,
+                let mut reader = std::io::BufReader::new(o);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) => {}
                         Err(_) => break,
-                    };
+                    }
+                    let line = line.trim_end_matches(['\r', '\n']);
                     touch_activity(&stdout_activity);
                     if line.trim().is_empty() {
                         continue;
                     }
-                    let v: serde_json::Value = match serde_json::from_str(&line) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
                     if parse_codex {
-                        if let Some(usage) = codex_turn_usage(&v) {
+                        let event: CodexLiteEvent = match serde_json::from_str(&line) {
+                            Ok(event) => event,
+                            Err(_) => continue,
+                        };
+                        if let Some(usage) = event.turn_usage() {
                             if let Ok(mut current) = codex_usage_reader.lock() {
                                 *current = Some(usage.clone());
                             }
                             emit_usage(&app2, &run2, usage);
                         }
-                        if let Some(status) = codex_turn_completion_status(&v) {
+                        if let Some(status) = event.turn_completion_status() {
                             if let Ok(mut current) = codex_turn_status_reader.lock() {
                                 *current = Some(status);
                             }
                             continue;
                         }
-                        if let Some(item) = codex_completed_item(&v) {
+                        if let Some(item) = event.completed_item() {
                             if let Some(line) = codex_progress_line(item) {
                                 acc.push_str(&line);
                                 if let Ok(mut current) = codex_streamed_output_reader.lock() {
@@ -8594,6 +10125,117 @@ async fn ai_cli(
                                 }
                                 emit_progress(&app2, &run2, &line);
                             }
+                        }
+                        continue;
+                    }
+                    let v: serde_json::Value = match serde_json::from_str(&line) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    if parse_gemini {
+                        match v.get("type").and_then(|t| t.as_str()) {
+                            Some("init") => {
+                                if !init_done {
+                                    init_done = true;
+                                    let model = progress_model_hint2
+                                        .as_deref()
+                                        .or_else(|| v.get("model").and_then(|m| m.as_str()))
+                                        .unwrap_or("");
+                                    let line = if model.is_empty() {
+                                        "⚙ 会话已启动，开始处理…".to_string()
+                                    } else {
+                                        format!("⚙ 会话已启动（{model}），开始处理…")
+                                    };
+                                    emit_progress(&app2, &run2, &format!("{line}\n"));
+                                }
+                            }
+                            Some("message") => {
+                                if v.get("role").and_then(|role| role.as_str())
+                                    == Some("assistant")
+                                {
+                                    if let Some(tx) =
+                                        v.get("content").and_then(|content| content.as_str())
+                                    {
+                                        acc.push_str(tx);
+                                        emit_progress(&app2, &run2, tx);
+                                    }
+                                }
+                            }
+                            Some("tool_use") => {
+                                let name = v
+                                    .get("tool_name")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or("tool");
+                                let id = v
+                                    .get("tool_id")
+                                    .and_then(|value| value.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| format!("t{}", tool_starts.len()));
+                                let input = v
+                                    .get("parameters")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+                                tool_starts
+                                    .insert(id.clone(), std::time::Instant::now());
+                                let mut patch = serde_json::json!({
+                                    "id": id,
+                                    "name": name,
+                                    "subject": tool_subject(&input),
+                                    "status": "running",
+                                });
+                                if !input.is_null() {
+                                    patch["args"] = input;
+                                }
+                                emit_progress(&app2, &run2, &encode_tool_patch(&patch));
+                            }
+                            Some("tool_result") => {
+                                let id = v
+                                    .get("tool_id")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or("");
+                                if !id.is_empty() {
+                                    let dur_ms = tool_starts
+                                        .remove(id)
+                                        .map(|start| start.elapsed().as_millis() as u64);
+                                    let is_error = v
+                                        .get("status")
+                                        .and_then(|value| value.as_str())
+                                        .map(|status| status != "success")
+                                        .unwrap_or(false);
+                                    let result_body = v
+                                        .get("output")
+                                        .and_then(|value| value.as_str())
+                                        .map(|value| value.to_string())
+                                        .or_else(|| {
+                                            v.pointer("/error/message")
+                                                .and_then(|value| value.as_str())
+                                                .map(|value| value.to_string())
+                                        })
+                                        .unwrap_or_default();
+                                    let truncated =
+                                        result_body.chars().count() > TOOL_RESULT_CLAMP;
+                                    let result_text: String = result_body
+                                        .chars()
+                                        .take(TOOL_RESULT_CLAMP)
+                                        .collect();
+                                    let patch = serde_json::json!({
+                                        "id": id,
+                                        "status": if is_error { "error" } else { "done" },
+                                        "durationMs": dur_ms,
+                                        "result": result_text,
+                                        "truncated": truncated,
+                                    });
+                                    emit_progress(&app2, &run2, &encode_tool_patch(&patch));
+                                }
+                            }
+                            Some("error") => {
+                                if let Some(message) =
+                                    v.get("message").and_then(|value| value.as_str())
+                                {
+                                    emit_progress(&app2, &run2, &format!("\n⚠ {message}\n"));
+                                }
+                            }
+                            _ => {}
                         }
                         continue;
                     }
@@ -9062,15 +10704,13 @@ mod tests {
         assert_eq!(ue_mcp_parse_engine_version("4"), Some((4, 0)));
         assert_eq!(ue_mcp_parse_engine_version(" 5.4.1 "), Some((5, 4)));
         // Source builds use a GUID association and have no numeric version.
-        assert_eq!(
-            ue_mcp_parse_engine_version("{0557D9C8-4D9D...}"),
-            None
-        );
+        assert_eq!(ue_mcp_parse_engine_version("{0557D9C8-4D9D...}"), None);
         assert_eq!(ue_mcp_parse_engine_version(""), None);
     }
 
     #[test]
     fn ue_mcp_enable_uproject_plugins_is_idempotent_and_merges() {
+        assert!(UE_MCP_REQUIRED_PLUGINS.contains(&"PythonScriptPlugin"));
         let dir = std::env::temp_dir().join(format!(
             "fuc-ue-uproject-{}-{}",
             std::process::id(),
@@ -9091,7 +10731,11 @@ mod tests {
         )
         .unwrap();
 
-        let plugins = ["RemoteControl", "EditorScriptingUtilities", "PythonScriptPlugin"];
+        let plugins = [
+            "RemoteControl",
+            "EditorScriptingUtilities",
+            "PythonScriptPlugin",
+        ];
         let first = ue_mcp_enable_uproject_plugins(&uproject, &plugins).unwrap();
         // RemoteControl flips false->true; the other two are appended.
         assert!(first.contains(&"RemoteControl".to_string()));
@@ -9123,23 +10767,68 @@ mod tests {
     }
 
     #[test]
-    fn ue_mcp_remote_control_config_is_idempotent_and_version_aware() {
-        let dir = std::env::temp_dir().join(format!(
-            "fuc-ue-rc-{}-{}",
-            std::process::id(),
-            now_ms()
+    fn ue_mcp_tasklist_detects_running_unreal_editor() {
+        let tasklist = "\"UnrealEditor.exe\",\"1234\",\"Console\",\"1\",\"1,000 K\"\r\n\
+\"Code.exe\",\"2345\",\"Console\",\"1\",\"1,000 K\"\r\n";
+        assert!(ue_mcp_tasklist_contains_unreal_editor(tasklist));
+        assert!(ue_mcp_tasklist_contains_unreal_editor(
+            "\"UE4Editor.exe\",\"1234\",\"Console\",\"1\",\"1,000 K\"\r\n"
         ));
+        assert!(ue_mcp_tasklist_contains_unreal_editor(
+            "\"UnrealEditor-Win64-DebugGame.exe\",\"1234\",\"Console\",\"1\",\"1,000 K\"\r\n"
+        ));
+        assert!(!ue_mcp_tasklist_contains_unreal_editor(
+            "\"UnrealEditor-Cmd.exe\",\"1234\",\"Console\",\"1\",\"1,000 K\"\r\n"
+        ));
+    }
+
+    #[test]
+    fn ue_mcp_remote_control_config_is_idempotent_and_version_aware() {
+        let dir =
+            std::env::temp_dir().join(format!("fuc-ue-rc-{}-{}", std::process::id(), now_ms()));
         std::fs::create_dir_all(&dir).unwrap();
 
         // Modern line (5.x): writes the modern startup CVars.
         let m1 = ue_mcp_write_remote_control_config(&dir, Some((5, 3))).unwrap();
-        assert!(m1.is_some());
+        assert!(m1.contains(&"Config/DefaultEngine.ini".to_string()));
+        assert!(m1.contains(&"Config/DefaultRemoteControl.ini".to_string()));
         let ini = std::fs::read_to_string(dir.join("Config/DefaultEngine.ini")).unwrap();
         assert!(ini.contains("FreeUltraCode: Unreal MCP RemoteControl auto-start"));
         assert!(ini.contains("WebControl.EnableServerOnStartup 1"));
+        assert!(ini.contains("FreeUltraCode: Unreal MCP full-access defaults"));
+        assert!(ini.contains("[/Script/RemoteControlCommon.RemoteControlSettings]"));
+        assert!(ini.contains("bAllowConsoleCommandRemoteExecution=True"));
+        assert!(ini.contains("bEnableRemotePythonExecution=True"));
+        assert!(ini.contains("bAllowRemotePythonExecution=True"));
+        assert!(ini.contains("bRemoteExecution=True"));
+        let rc_ini = std::fs::read_to_string(dir.join("Config/DefaultRemoteControl.ini")).unwrap();
+        assert!(rc_ini.contains("FreeUltraCode: Unreal MCP full-access defaults"));
+        assert!(rc_ini.contains("[/Script/RemoteControlCommon.RemoteControlSettings]"));
+        assert!(rc_ini.contains("bEnableRemotePythonExecution=True"));
         // Second run is a no-op (managed marker already present).
         let m2 = ue_mcp_write_remote_control_config(&dir, Some((5, 3))).unwrap();
-        assert!(m2.is_none());
+        assert!(m2.is_empty());
+
+        // Existing installs with only the old startup marker are upgraded with
+        // the full-access defaults instead of being treated as complete.
+        let upgrade_dir = dir.join("upgrade");
+        let upgrade_config = upgrade_dir.join("Config");
+        std::fs::create_dir_all(&upgrade_config).unwrap();
+        std::fs::write(
+            upgrade_config.join("DefaultEngine.ini"),
+            "\n; >>> FreeUltraCode: Unreal MCP RemoteControl auto-start\n[/Script/Engine.Engine]\n+ConsoleCommands=RemoteControl.EnableWebServerOnStartup 1\n+ConsoleCommands=WebControl.EnableServerOnStartup 1\n; <<< FreeUltraCode: Unreal MCP RemoteControl auto-start\n",
+        )
+        .unwrap();
+        let upgraded = ue_mcp_write_remote_control_config(&upgrade_dir, Some((5, 3))).unwrap();
+        assert!(upgraded.contains(&"Config/DefaultEngine.ini".to_string()));
+        assert!(upgraded.contains(&"Config/DefaultRemoteControl.ini".to_string()));
+        let upgraded_ini =
+            std::fs::read_to_string(upgrade_config.join("DefaultEngine.ini")).unwrap();
+        assert!(upgraded_ini.contains("FreeUltraCode: Unreal MCP full-access defaults"));
+        assert!(upgraded_ini.contains("bEnableRemotePythonExecution=True"));
+        let upgraded_again =
+            ue_mcp_write_remote_control_config(&upgrade_dir, Some((5, 3))).unwrap();
+        assert!(upgraded_again.is_empty());
 
         // Legacy 4.25 in a fresh dir emits the StartServer console command too.
         let legacy_dir = dir.join("legacy");
@@ -9191,6 +10880,56 @@ mod tests {
         assert_eq!(servers[0].id, UE_MCP_SERVER_ID);
         assert_eq!(servers[0].transport, "stdio");
         assert!(servers[0].requires_user_approval);
+    }
+
+    #[test]
+    fn codex_project_mcp_config_args_are_toml_overrides() {
+        let settings = serde_json::json!({
+            "mcpServers": {
+                "ue-mcp-for-all-versions": {
+                    "command": "C:\\Users\\fengwei\\.freeultracode\\tools\\ue-mcp.exe",
+                    "args": ["--host", "127.0.0.1"],
+                    "env": { "UE_PROJECT": "Game" }
+                }
+            }
+        });
+        let mut args = Vec::new();
+
+        append_codex_project_mcp_config_args_from_settings(&mut args, &settings);
+
+        assert_eq!(args[0], "-c");
+        assert_eq!(
+            args[1],
+            "mcp_servers.ue-mcp-for-all-versions.command=\"C:\\\\Users\\\\fengwei\\\\.freeultracode\\\\tools\\\\ue-mcp.exe\""
+        );
+        assert_eq!(args[2], "-c");
+        assert_eq!(
+            args[3],
+            "mcp_servers.ue-mcp-for-all-versions.args=[\"--host\",\"127.0.0.1\"]"
+        );
+        assert_eq!(args[4], "-c");
+        assert_eq!(
+            args[5],
+            "mcp_servers.ue-mcp-for-all-versions.env.UE_PROJECT=\"Game\""
+        );
+    }
+
+    #[test]
+    fn gemini_project_mcp_settings_trusts_project_servers() {
+        let mut settings = serde_json::json!({
+            "mcpServers": {
+                "ue-mcp-for-all-versions": {
+                    "command": "C:\\Users\\fengwei\\.freeultracode\\tools\\ue-mcp.exe",
+                    "args": ["--host", "127.0.0.1"]
+                }
+            }
+        });
+        trust_gemini_mcp_servers(&mut settings);
+
+        assert_eq!(
+            settings["mcpServers"]["ue-mcp-for-all-versions"]["trust"].as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
@@ -9340,28 +11079,29 @@ mod tests {
 
     #[test]
     fn parses_codex_type_events() {
-        let item = serde_json::json!({
+        let item: CodexLiteEvent = serde_json::from_str(
+            r#"{
             "type": "item.completed",
             "item": { "type": "agent_message", "text": "done" }
-        });
+        }"#,
+        )
+        .unwrap();
         assert_eq!(
-            codex_completed_item(&item)
-                .and_then(|v| v.get("text"))
-                .and_then(|v| v.as_str()),
+            item.completed_item().and_then(|item| item.text.as_deref()),
             Some("done")
         );
 
-        let turn = serde_json::json!({
+        let turn: CodexLiteEvent = serde_json::from_str(
+            r#"{
             "type": "turn.completed",
             "status": "completed",
             "usage": { "input_tokens": 22451, "cached_input_tokens": 11648, "output_tokens": 28 }
-        });
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(turn.turn_completion_status().as_deref(), Some("completed"));
         assert_eq!(
-            codex_turn_completion_status(&turn).as_deref(),
-            Some("completed")
-        );
-        assert_eq!(
-            codex_turn_usage(&turn)
+            turn.turn_usage()
                 .and_then(|v| v.get("cached_input_tokens"))
                 .and_then(|v| v.as_u64()),
             Some(11648)
@@ -9370,33 +11110,57 @@ mod tests {
 
     #[test]
     fn parses_codex_method_events() {
-        let item = serde_json::json!({
+        let item: CodexLiteEvent = serde_json::from_str(
+            r#"{
             "method": "item/completed",
             "params": { "item": { "type": "command_execution", "command": "npm test" } }
-        });
+        }"#,
+        )
+        .unwrap();
         assert_eq!(
-            codex_completed_item(&item)
-                .and_then(|v| v.get("command"))
-                .and_then(|v| v.as_str()),
+            item.completed_item()
+                .and_then(|item| item.command.as_deref()),
             Some("npm test")
         );
 
-        let turn = serde_json::json!({
+        let turn: CodexLiteEvent = serde_json::from_str(
+            r#"{
             "method": "turn/completed",
             "params": {
                 "turn": { "status": "completed" },
                 "usage": { "input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 2 }
             }
-        });
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(turn.turn_completion_status().as_deref(), Some("completed"));
         assert_eq!(
-            codex_turn_completion_status(&turn).as_deref(),
-            Some("completed")
-        );
-        assert_eq!(
-            codex_turn_usage(&turn)
+            turn.turn_usage()
                 .and_then(|v| v.get("cached_input_tokens"))
                 .and_then(|v| v.as_u64()),
             Some(4)
+        );
+    }
+
+    #[test]
+    fn codex_lite_item_ignores_tool_output_body() {
+        let event: CodexLiteEvent = serde_json::from_str(
+            r#"{
+              "method": "item/completed",
+              "params": {
+                "item": {
+                  "type": "command_execution",
+                  "command": "rg -n foo app/src",
+                  "output": "large tool output should not be rendered"
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let line = event.completed_item().and_then(codex_progress_line);
+        assert_eq!(
+            line.as_deref(),
+            Some("\n🔧 command_execution: rg -n foo app/src\n")
         );
     }
 
@@ -9737,19 +11501,207 @@ mod tests {
     #[test]
     fn parse_p4_workspace_changes_uses_preview_actions() {
         let root = Path::new("E:/Depot/Client");
+        let mappings =
+            parse_p4_where_mappings(root, "//depot/... //client/... E:\\Depot\\Client\\...\n");
         let files = parse_p4_workspace_changes(
             root,
             "Source/New.cpp - reconcile to add //depot/Source/New.cpp\n\
              Source/Edit.cpp - reconcile to edit //depot/Source/Edit.cpp#3\n\
-             //depot/Source/Gone.cpp#2 - opened for delete\n",
+             //depot/Source/Gone.cpp#2 - opened for delete\n\
+             //client/Source/ClientEdit.cpp#4 - opened for edit\n",
+            &mappings,
         );
 
-        assert_eq!(files.len(), 3);
+        assert_eq!(files.len(), 4);
         assert_eq!(files[0].path, "Source/New.cpp");
         assert_eq!(files[0].status, "added");
         assert_eq!(files[1].status, "modified");
-        assert_eq!(files[2].path, "//depot/Source/Gone.cpp");
+        assert_eq!(files[2].path, "Source/Gone.cpp");
         assert_eq!(files[2].status, "deleted");
+        assert_eq!(files[3].path, "Source/ClientEdit.cpp");
+        assert_eq!(files[3].status, "modified");
+    }
+
+    #[test]
+    fn parse_p4_where_mappings_supports_subdirectory_roots() {
+        let root = Path::new("E:/Depot/Client/Project");
+        let mappings =
+            parse_p4_where_mappings(root, "//depot/... //client/... E:\\Depot\\Client\\...\n");
+
+        assert_eq!(
+            relative_p4_status_path_from_root(root, "//depot/Project/Source/Main.cpp#7", &mappings),
+            "Source/Main.cpp"
+        );
+    }
+
+    #[test]
+    fn parse_p4_where_mappings_trims_current_directory_suffixes() {
+        let root = Path::new("E:/Depot/Client/Project");
+        let mappings = parse_p4_where_mappings(
+            root,
+            "//depot/Project/. //client/Project/. E:\\Depot\\Client\\Project\\.\n",
+        );
+
+        assert_eq!(
+            relative_p4_status_path_from_root(root, "//depot/Project/Source/Main.cpp#7", &mappings),
+            "Source/Main.cpp"
+        );
+    }
+
+    #[test]
+    fn parse_p4_info_mapping_maps_stream_and_client_paths() {
+        let root = Path::new("E:/project_moon_ue5/MoonEngine");
+        let mut mappings = parse_p4_where_mappings(root, "");
+        mappings.push(
+            parse_p4_info_mapping(
+                "Client name: fengwei_project_moonengine\n\
+                 Client root: E:\\project_moon_ue5\\MoonEngine\n\
+                 Client stream: //MoonEngine/dev-5.7.4\n",
+            )
+            .unwrap(),
+        );
+        dedupe_sort_p4_where_mappings(&mut mappings);
+
+        assert_eq!(
+            relative_p4_status_path_from_root(
+                root,
+                "//MoonEngine/dev-5.7.4/Engine/Source/Edit.cpp#1",
+                &mappings
+            ),
+            "Engine/Source/Edit.cpp"
+        );
+        assert_eq!(
+            relative_p4_status_path_from_root(
+                root,
+                "//fengwei_project_moonengine/Engine/Source/Edit.cpp#1",
+                &mappings
+            ),
+            "Engine/Source/Edit.cpp"
+        );
+    }
+
+    #[test]
+    fn parse_p4_where_mappings_supports_workspace_ellipsis() {
+        let root = Path::new("E:/project_moon_ue5/MoonEngine");
+        let mappings = parse_p4_where_mappings(
+            root,
+            "//MoonEngine/dev-5.7.4/... //fengwei_project_moonengine/... E:\\project_moon_ue5\\MoonEngine\\...\n",
+        );
+
+        assert_eq!(
+            relative_p4_status_path_from_root(
+                root,
+                "//MoonEngine/dev-5.7.4/Engine/Source/Edit.cpp#1",
+                &mappings
+            ),
+            "Engine/Source/Edit.cpp"
+        );
+    }
+
+    #[test]
+    fn p4_observer_status_commands_are_read_only() {
+        let commands: Vec<Vec<&str>> = P4_OBSERVER_STATUS_COMMANDS
+            .iter()
+            .map(|args| args.to_vec())
+            .collect();
+
+        assert_eq!(
+            commands,
+            vec![vec!["opened"], vec!["reconcile", "-n", "-ead"]]
+        );
+        assert!(commands
+            .iter()
+            .all(|args| { args.first().copied() != Some("reconcile") || args.contains(&"-n") }));
+        assert!(!commands
+            .iter()
+            .any(|args| args.first().is_some_and(|command| {
+                matches!(*command, "add" | "edit" | "delete" | "revert" | "submit")
+            })));
+    }
+
+    #[test]
+    fn p4_workspace_status_specs_scan_root_files_before_directories() {
+        let root =
+            std::env::temp_dir().join(format!("fuc-p4-specs-{}-{}", std::process::id(), now_ms()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Content")).unwrap();
+        std::fs::create_dir_all(root.join("Source")).unwrap();
+        std::fs::write(root.join("README.md"), "readme\n").unwrap();
+
+        let specs = p4_workspace_status_specs(&root);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(
+            specs,
+            vec![
+                "*".to_string(),
+                "Content/...".to_string(),
+                "Source/...".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn root_workspace_status_files_keeps_only_root_children() {
+        let file = |path: &str, old_path: Option<&str>| WorkspaceChangeFile {
+            path: path.to_string(),
+            old_path: old_path.map(str::to_string),
+            status: "modified".to_string(),
+            binary: false,
+            truncated: true,
+            lines: Vec::new(),
+        };
+
+        let files = root_workspace_status_files(vec![
+            file("Root.txt", None),
+            file("Source/Nested.cpp", None),
+            file("Moved/New.cpp", Some("OldRoot.cpp")),
+        ]);
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "Root.txt");
+        assert_eq!(files[1].old_path.as_deref(), Some("OldRoot.cpp"));
+    }
+
+    #[test]
+    fn p4_timed_out_directory_spec_subdivides_to_children() {
+        let root =
+            std::env::temp_dir().join(format!("fuc-p4-split-{}-{}", std::process::id(), now_ms()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Content").join("Maps")).unwrap();
+        std::fs::write(root.join("Content").join("Main.umap"), "map\n").unwrap();
+
+        let specs = p4_child_specs_for_timed_out_spec(&root, "Content/...");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(
+            specs,
+            vec![
+                "Content/Main.umap".to_string(),
+                "Content/Maps/...".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn p4_status_command_timeout_respects_total_budget() {
+        let command_timeout = std::time::Duration::from_millis(WORKSPACE_STATUS_COMMAND_TIMEOUT_MS);
+        assert_eq!(
+            p4_status_command_timeout_for_elapsed(std::time::Duration::from_millis(0)),
+            Some(command_timeout)
+        );
+        assert_eq!(
+            p4_status_command_timeout_for_elapsed(std::time::Duration::from_millis(
+                P4_STATUS_TOTAL_TIMEOUT_MS - 5
+            )),
+            Some(std::time::Duration::from_millis(5))
+        );
+        assert_eq!(
+            p4_status_command_timeout_for_elapsed(std::time::Duration::from_millis(
+                P4_STATUS_TOTAL_TIMEOUT_MS
+            )),
+            None
+        );
     }
 
     #[test]
@@ -9916,10 +11868,14 @@ pub fn run() {
             list_workspace_dir,
             project_environment_scan,
             project_mcp_probe,
+            project_lsp_probe,
+            project_lsp_install,
             ue_mcp_ensure_binary,
             ue_mcp_setup_project,
             workspace_changes_baseline,
             workspace_changes,
+            workspace_vcs_status,
+            workspace_vcs_status_shallow,
             workspace_changes_cached,
             preview_local_file,
             save_clipboard_image,

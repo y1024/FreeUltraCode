@@ -11,7 +11,7 @@
  *                 [--model <m>            (filtered by shouldPassModel)]
  *                 [--permission-mode plan | --dangerously-skip-permissions]
  *                 [--add-dir <cwd>]
- * argv (codex):   [-a never|on-request] exec --json --skip-git-repo-check
+ * argv (codex):   [-a never|on-request] exec [-c project MCP overrides...] --json --skip-git-repo-check
  *                 [--sandbox read-only|workspace-write | --dangerously-bypass-...]
  *                 [--model <m>] [-C <cwd>] [-o <outfile>] -
  *
@@ -25,9 +25,9 @@
  */
 import { spawn } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
   adapterProtocol,
@@ -200,6 +200,161 @@ function mcpEnabled(): boolean {
   return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
 }
 
+function projectHistoryPathKey(path: string | undefined): string | null {
+  const trimmed = path?.trim();
+  if (!trimmed) return null;
+  const normalized = resolve(trimmed).replace(/\\/g, '/');
+  return IS_WINDOWS ? normalized.toLowerCase() : normalized;
+}
+
+function freeUltraCodeRoot(): string {
+  const configured = process.env.FUC_HOME?.trim();
+  return configured || join(homedir(), '.freeultracode');
+}
+
+function projectSettingsForCwd(cwd: string | undefined): Record<string, unknown> | null {
+  const cwdKey = projectHistoryPathKey(cwd);
+  if (!cwdKey) return null;
+  try {
+    const indexPath = join(freeUltraCodeRoot(), 'workspaces', 'index.json');
+    const workspaces = JSON.parse(readFileSync(indexPath, 'utf8')) as unknown;
+    if (!Array.isArray(workspaces)) return null;
+    const workspace = workspaces.find((item) => {
+      if (!item || typeof item !== 'object') return false;
+      const path = (item as Record<string, unknown>).path;
+      return typeof path === 'string' && projectHistoryPathKey(path) === cwdKey;
+    });
+    const metadata =
+      workspace && typeof workspace === 'object'
+        ? (workspace as Record<string, unknown>).metadata
+        : null;
+    const settings =
+      metadata && typeof metadata === 'object'
+        ? (metadata as Record<string, unknown>).projectSettings
+        : null;
+    return settings && typeof settings === 'object'
+      ? (settings as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function projectExpandPathText(value: string): string {
+  const userProfile = process.env.USERPROFILE || '';
+  const home = process.env.HOME || userProfile;
+  return value
+    .replace(/%USERPROFILE%/gi, userProfile)
+    .replace(/%HOME%/gi, home)
+    .replace(/^~(?=[/\\]|$)/, home);
+}
+
+function projectMcpSettingsJson(cwd: string | undefined): Record<string, unknown> | null {
+  const settings = projectSettingsForCwd(cwd);
+  const mcp = settings?.mcp;
+  if (!mcp || typeof mcp !== 'object') return null;
+  const mcpRecord = mcp as Record<string, unknown>;
+  if (mcpRecord.enabled === false) return null;
+  const servers = Array.isArray(mcpRecord.servers) ? mcpRecord.servers : [];
+  const workspace = cwd?.trim() ?? '';
+  const used = new Set<string>();
+  const mcpServers: Record<string, unknown> = {};
+
+  for (const raw of servers) {
+    if (!raw || typeof raw !== 'object') continue;
+    const server = raw as Record<string, unknown>;
+    if (server.enabled !== true) continue;
+    if (server.transport !== 'stdio') continue;
+    const command = typeof server.command === 'string' ? server.command.trim() : '';
+    if (!command) continue;
+    const id = typeof server.id === 'string' ? server.id : 'project-mcp';
+    let key = id.replace(/[^A-Za-z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'project-mcp';
+    const base = key;
+    let suffix = 2;
+    while (used.has(key)) {
+      key = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    used.add(key);
+
+    const entry: Record<string, unknown> = {
+      command: projectExpandPathText(command),
+    };
+    if (Array.isArray(server.args)) {
+      entry.args = server.args
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.replaceAll('{workspace}', workspace));
+    }
+    if (server.env && typeof server.env === 'object') {
+      const env = Object.fromEntries(
+        Object.entries(server.env as Record<string, unknown>)
+          .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+          .map(([key, value]) => [key, value.replaceAll('{workspace}', workspace)]),
+      );
+      if (Object.keys(env).length > 0) entry.env = env;
+    }
+    mcpServers[key] = entry;
+  }
+  return Object.keys(mcpServers).length > 0 ? { mcpServers } : null;
+}
+
+function writeProjectMcpSettings(cwd: string | undefined): { path: string; dir: string } | null {
+  const settings = projectMcpSettingsJson(cwd);
+  if (!settings) return null;
+  const dir = mkdtempSync(join(tmpdir(), 'freeultracode-project-mcp-'));
+  const path = join(dir, 'settings.json');
+  writeFileSync(path, JSON.stringify(settings), 'utf8');
+  return { path, dir };
+}
+
+function tomlLiteralString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function tomlLiteralStringArray(values: string[]): string {
+  return JSON.stringify(values);
+}
+
+function codexConfigKeySegment(value: string): string {
+  return value && /^[A-Za-z0-9_-]+$/.test(value)
+    ? value
+    : tomlLiteralString(value);
+}
+
+function appendCodexProjectMcpConfigArgsFromSettings(
+  args: string[],
+  settings: Record<string, unknown> | null,
+): void {
+  const servers = settings?.mcpServers;
+  if (!servers || typeof servers !== 'object') return;
+  for (const [id, raw] of Object.entries(servers as Record<string, unknown>)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const server = raw as Record<string, unknown>;
+    const command = typeof server.command === 'string' ? server.command.trim() : '';
+    if (!command) continue;
+    const serverKey = codexConfigKeySegment(id);
+    args.push('-c', `mcp_servers.${serverKey}.command=${tomlLiteralString(command)}`);
+    const serverArgs = Array.isArray(server.args)
+      ? server.args.filter((item): item is string => typeof item === 'string')
+      : [];
+    args.push('-c', `mcp_servers.${serverKey}.args=${tomlLiteralStringArray(serverArgs)}`);
+    if (server.env && typeof server.env === 'object') {
+      for (const [key, value] of Object.entries(server.env as Record<string, unknown>)) {
+        if (typeof value !== 'string') continue;
+        args.push(
+          '-c',
+          `mcp_servers.${serverKey}.env.${codexConfigKeySegment(key)}=${tomlLiteralString(value)}`,
+        );
+      }
+    }
+  }
+}
+
+function appendCodexProjectMcpConfigArgs(args: string[], cwd: string | undefined): void {
+  if (!mcpEnabled()) return;
+  appendCodexProjectMcpConfigArgsFromSettings(args, projectMcpSettingsJson(cwd));
+}
+
 /** Kill a process tree: Windows `taskkill /PID <pid> /T /F`, *nix `kill -TERM`. */
 export function terminateProcessTree(pid: number): void {
   try {
@@ -272,10 +427,11 @@ function buildArgs(
   protocol: string,
   codexOutPath: string | undefined,
   binary: string,
-): { args: string[]; workdir?: string; disableAutoupdater: boolean } {
+): { args: string[]; workdir?: string; disableAutoupdater: boolean; tempDirs: string[] } {
   const args: string[] = [];
   let workdir: string | undefined;
   let disableAutoupdater = false;
+  const tempDirs: string[] = [];
   const permission = opts.permission ?? 'full';
   const cwd = opts.cwd?.trim();
 
@@ -293,6 +449,7 @@ function buildArgs(
     } else {
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
+    appendCodexProjectMcpConfigArgs(args, cwd);
     if (opts.model && shouldPassModel(opts.adapter, opts.model)) {
       args.push('--model', opts.model);
     }
@@ -311,7 +468,13 @@ function buildArgs(
       args.push('--bare');
     }
     disableAutoupdater = true;
-    if (!mcpEnabled()) {
+    if (mcpEnabled()) {
+      const projectMcp = writeProjectMcpSettings(cwd);
+      if (projectMcp) {
+        args.push('--mcp-config', projectMcp.path);
+        tempDirs.push(projectMcp.dir);
+      }
+    } else {
       args.push('--strict-mcp-config');
     }
     const sid = opts.sessionId?.trim();
@@ -337,7 +500,7 @@ function buildArgs(
       args.push('--add-dir', cwd);
     }
   }
-  return { args, workdir, disableAutoupdater };
+  return { args, workdir, disableAutoupdater, tempDirs };
 }
 
 /**
@@ -360,7 +523,15 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
     codexDir = mkdtempSync(join(tmpdir(), 'freeultracode-codex-'));
     codexOutPath = join(codexDir, 'last-message.txt');
   }
-  const cleanupCodex = () => {
+  let tempDirs: string[] = [];
+  const cleanupTempDirs = () => {
+    for (const dir of tempDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
     if (codexDir) {
       try {
         rmSync(codexDir, { recursive: true, force: true });
@@ -370,12 +541,14 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
     }
   };
 
-  const { args, workdir, disableAutoupdater } = buildArgs(
+  const built = buildArgs(
     opts,
     protocol,
     codexOutPath,
     binary,
   );
+  const { args, workdir, disableAutoupdater } = built;
+  tempDirs = built.tempDirs;
 
   return new Promise<string>((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env };
@@ -398,7 +571,7 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
         windowsVerbatimArguments: launch.verbatim,
       });
     } catch (err) {
-      cleanupCodex();
+      cleanupTempDirs();
       reject(
         new Error(
           `无法启动 CLI "${binary}"：请确认它已安装并在 PATH 中。(${(err as Error).message})`,
@@ -429,14 +602,14 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
       if (settled) return;
       settled = true;
       cleanupTimers();
-      cleanupCodex();
+      cleanupTempDirs();
       reject(new Error(appendErrorContext(msg, result || acc, stderrBuf)));
     };
     const finishResolve = (out: string) => {
       if (settled) return;
       settled = true;
       cleanupTimers();
-      cleanupCodex();
+      cleanupTempDirs();
       resolve(out);
     };
     const currentOutput = () => {

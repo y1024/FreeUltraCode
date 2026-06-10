@@ -4356,7 +4356,7 @@ export default function AIDock({
                         else messageRefs.current.delete(m.id);
                       }}
                       className={
-                        'flex flex-col gap-1 rounded-md px-1 py-0.5 transition-colors ' +
+                        'group/msg flex flex-col gap-1 rounded-md px-1 py-0.5 transition-colors ' +
                         (isChatUser ? 'items-end ' : '') +
                         (isCurrentSearchHit
                           ? 'bg-accent/5 ring-1 ring-inset ring-accent-3/40'
@@ -4384,6 +4384,13 @@ export default function AIDock({
                         >
                           {formatMessageTime(m.createdAt)}
                         </span>
+                        {isUser && m.text.trim() && (
+                          <CopyButton
+                            value={m.text}
+                            title="复制"
+                            className="shrink-0 opacity-0 transition-opacity group-hover/msg:opacity-100"
+                          />
+                        )}
                       </div>
                       {m.runProgress && (
                         <UltracodeRunCard

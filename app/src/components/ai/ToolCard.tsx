@@ -19,9 +19,9 @@ function fmtDuration(ms: number): string {
 
 function StatusGlyph({ status }: { status: ToolEvent['status'] }) {
   if (status === 'running')
-    return <Loader2 size={12} className="animate-spin text-status-running" />;
-  if (status === 'error') return <X size={12} className="text-status-error" />;
-  return <Check size={12} className="text-status-success" />;
+    return <Loader2 size={11} className="animate-spin text-status-running" />;
+  if (status === 'error') return <X size={11} className="text-status-error" />;
+  return <Check size={11} className="ai-tool-status-done" />;
 }
 
 /** Render a tool's args/result body with the same code chrome as AI code blocks. */
@@ -114,7 +114,7 @@ export default function ToolCard({
       data-status={event.status}
       style={depth ? { marginLeft: depth * 14 } : undefined}
     >
-      <div className="flex items-center gap-1.5 px-2 py-1 font-mono text-[11px] leading-snug">
+      <div className="flex items-center gap-1.5 px-2 py-0.5 font-mono text-[10px] leading-snug">
         {hasBody ? (
           <button
             type="button"
@@ -124,14 +124,14 @@ export default function ToolCard({
             className="ai-tool-toggle -ml-0.5 flex shrink-0 items-center transition-colors"
           >
             <ChevronRight
-              size={12}
+              size={11}
               className={'transition-transform ' + (open ? 'rotate-90' : '')}
             />
           </button>
         ) : (
           <span className="w-3 shrink-0" />
         )}
-        <ToolIcon name={event.name} size={12} className="ai-tool-icon shrink-0" />
+        <ToolIcon name={event.name} size={11} className="ai-tool-icon shrink-0" />
         <span className="ai-tool-name shrink-0 font-medium">{event.name}</span>
         {collapsedSubject && (
           <span className="ai-tool-subject min-w-0 flex-1 truncate">

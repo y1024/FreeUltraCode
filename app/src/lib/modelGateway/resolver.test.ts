@@ -10,6 +10,7 @@ import {
 } from '@/lib/freeChannels';
 import {
   resolveGatewayRoute,
+  gatewayRouteEnv,
   nodeGatewayOverride,
   mergeGatewaySelection,
   nodeParamsWithGatewayOverride,
@@ -273,6 +274,22 @@ describe('model gateway compatibility', () => {
     expect(route.env).toMatchObject({
       ANTHROPIC_BASE_URL: 'https://integrate.api.nvidia.com/v1',
       ANTHROPIC_MODEL: 'nvidia/nemotron-3-super-120b-a12b',
+    });
+  });
+
+  it('exports Gemini CLI env even when the selected channel is direct-compatible', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'gemini',
+        transport: 'openai-compatible',
+        apiKey: 'gemini-key',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-2.5-pro',
+      }),
+    ).toMatchObject({
+      GEMINI_API_KEY: 'gemini-key',
+      GOOGLE_API_KEY: 'gemini-key',
+      GOOGLE_GEMINI_BASE_URL: 'https://generativelanguage.googleapis.com',
     });
   });
 

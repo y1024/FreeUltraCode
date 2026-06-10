@@ -70,6 +70,7 @@ type MockStoreState = {
   setWorkspace: (path: string) => void;
   selectSession: (sessionId: string, workspaceId?: string) => void;
   deleteSession: (sessionId: string, workspaceId?: string) => void;
+  deleteWorkspaceHistory: (workspaceId: string) => void;
   renameWorkflowSession: (
     sessionId: string,
     workspaceId: string | null,
@@ -224,6 +225,7 @@ function resetSidebarStore(): void {
     setWorkspace: vi.fn(),
     selectSession: vi.fn(),
     deleteSession: vi.fn(),
+    deleteWorkspaceHistory: vi.fn(),
     renameWorkflowSession: vi.fn(async () => undefined),
     setWorkflowFavoriteSession: vi.fn(async () => undefined),
     setWorkflowScheduledTaskSession: vi.fn(async () => undefined),
@@ -317,6 +319,14 @@ function workspaceButton(
 ): HTMLButtonElement {
   const button = Array.from(container.querySelectorAll('button')).find((item) =>
     item.textContent?.includes(title),
+  );
+  expect(button).toBeInstanceOf(HTMLButtonElement);
+  return button as HTMLButtonElement;
+}
+
+function workspaceMoreButton(container: HTMLElement): HTMLButtonElement {
+  const button = container.querySelector(
+    'button[aria-label="更多工作区操作"]',
   );
   expect(button).toBeInstanceOf(HTMLButtonElement);
   return button as HTMLButtonElement;
@@ -576,6 +586,77 @@ describe('Sidebar workflow rename', () => {
 
       expect(openWorkspaceDirectory).toHaveBeenCalledWith(WORKSPACE.path);
       expect(view.container.textContent).not.toContain('打开工作区目录');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('opens workspace actions from the more button', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      await clickButton(workspaceMoreButton(view.container));
+
+      expect(view.container.textContent).toContain('打开工作区目录');
+      expect(view.container.textContent).toContain('项目设置');
+      expect(view.container.textContent).toContain('从历史中移除');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('asks for confirmation before removing a workspace history entry', async () => {
+    resetSidebarStore();
+    const view = await renderSidebar();
+
+    try {
+      await clickButton(workspaceMoreButton(view.container));
+      const removeButton = Array.from(
+        view.container.querySelectorAll('button'),
+      ).find((button) => button.textContent?.includes('从历史中移除'));
+      expect(removeButton).toBeInstanceOf(HTMLButtonElement);
+
+      await clickButton(removeButton as HTMLButtonElement);
+
+      expect(mockState.deleteWorkspaceHistory).not.toHaveBeenCalled();
+      const dialog = view.container.querySelector('[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      expect(dialog?.textContent).toContain(
+        '不会删除原始项目文件或目录',
+      );
+      const confirmButton = Array.from(
+        view.container.querySelectorAll('button'),
+      ).find((button) => button.textContent?.trim() === '移除');
+      expect(confirmButton).toBeInstanceOf(HTMLButtonElement);
+
+      await clickButton(confirmButton as HTMLButtonElement);
+
+      expect(mockState.deleteWorkspaceHistory).toHaveBeenCalledWith(
+        WORKSPACE.id,
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('disables workspace history removal while a workspace session is live', async () => {
+    resetSidebarStore();
+    mockState.chattingSessions = [SESSION_KEY];
+    const view = await renderSidebar();
+
+    try {
+      await clickButton(workspaceMoreButton(view.container));
+      const removeButton = Array.from(
+        view.container.querySelectorAll('button'),
+      ).find((button) => button.textContent?.includes('从历史中移除'));
+      expect(removeButton).toBeInstanceOf(HTMLButtonElement);
+
+      expect((removeButton as HTMLButtonElement).disabled).toBe(true);
+      expect(removeButton).toHaveProperty(
+        'title',
+        '该工作区有正在运行或编辑的会话，暂不能移除',
+      );
     } finally {
       await view.cleanup();
     }

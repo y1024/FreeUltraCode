@@ -1,6 +1,7 @@
 import type {
   ProjectEngineKind,
   ProjectEnvironmentScan,
+  ProjectLspProbeResult,
   ProjectMcpProbeResult,
   ProjectMcpServerSuggestion,
 } from '@/lib/tauri';
@@ -33,6 +34,22 @@ export interface ProjectSkillSettings {
   recommendedSkillIds: string[];
 }
 
+export type ProjectLspServerSource = 'catalog' | 'custom';
+
+export interface ProjectLspServerConfig {
+  id: string;
+  enabled: boolean;
+  source: ProjectLspServerSource;
+  command?: string;
+  args: string[];
+  lastProbe?: ProjectLspProbeResult;
+}
+
+export interface ProjectLspSettings {
+  enabled: boolean;
+  servers: ProjectLspServerConfig[];
+}
+
 export type ProjectGameExpertEngine = 'auto' | 'unity' | 'unreal' | 'godot';
 
 export interface ProjectGameFeatureSettings {
@@ -57,6 +74,7 @@ export interface ProjectSettings {
     servers: ProjectMcpServerConfig[];
   };
   skills: ProjectSkillSettings;
+  lsp: ProjectLspSettings;
   gameFeatures: ProjectGameFeatureSettings;
   automation: ProjectAutomationSettings;
   updatedAt?: string;
@@ -145,6 +163,22 @@ function normalizeServer(value: unknown): ProjectMcpServerConfig | null {
   };
 }
 
+function normalizeLspServer(value: unknown): ProjectLspServerConfig | null {
+  if (!isRecord(value)) return null;
+  const id = typeof value.id === 'string' ? value.id.trim() : '';
+  if (!id) return null;
+  return {
+    id,
+    enabled: value.enabled === true,
+    source: value.source === 'custom' ? 'custom' : 'catalog',
+    command: typeof value.command === 'string' ? value.command : undefined,
+    args: stringArray(value.args),
+    lastProbe: isRecord(value.lastProbe)
+      ? (value.lastProbe as unknown as ProjectLspProbeResult)
+      : undefined,
+  };
+}
+
 export function emptyProjectSettings(): ProjectSettings {
   return {
     schemaVersion: PROJECT_SETTINGS_SCHEMA_VERSION,
@@ -157,6 +191,10 @@ export function emptyProjectSettings(): ProjectSettings {
       enabledRootIds: ['codex', 'agents', 'claude'],
       disabledSkillNames: [],
       recommendedSkillIds: [],
+    },
+    lsp: {
+      enabled: true,
+      servers: [],
     },
     gameFeatures: gameFeatureDefaultsForEngine('unknown'),
     automation: {
@@ -176,6 +214,7 @@ export function projectSettingsFromMetadata(
   if (!isRecord(raw)) return defaults;
   const mcp = isRecord(raw.mcp) ? raw.mcp : {};
   const skills = isRecord(raw.skills) ? raw.skills : {};
+  const lsp = isRecord(raw.lsp) ? raw.lsp : {};
   const gameFeatures = isRecord(raw.gameFeatures) ? raw.gameFeatures : {};
   const automation = isRecord(raw.automation) ? raw.automation : {};
   return {
@@ -201,6 +240,14 @@ export function projectSettingsFromMetadata(
         : defaults.skills.enabledRootIds,
       disabledSkillNames: stringArray(skills.disabledSkillNames),
       recommendedSkillIds: stringArray(skills.recommendedSkillIds),
+    },
+    lsp: {
+      enabled: lsp.enabled !== false,
+      servers: Array.isArray(lsp.servers)
+        ? lsp.servers
+            .map(normalizeLspServer)
+            .filter((server): server is ProjectLspServerConfig => server != null)
+        : [],
     },
     gameFeatures: {
       meshGeneration: gameFeatures.meshGeneration === true,

@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   FolderOpen,
+  MoreHorizontal,
   Pencil,
   Search,
   Settings as SettingsGlyph,
@@ -290,6 +291,7 @@ export default function Sidebar() {
   const setWorkspace = useStore((s) => s.setWorkspace);
   const selectSession = useStore((s) => s.selectSession);
   const deleteSession = useStore((s) => s.deleteSession);
+  const deleteWorkspaceHistory = useStore((s) => s.deleteWorkspaceHistory);
   const renameWorkflowSession = useStore((s) => s.renameWorkflowSession);
   const setWorkflowFavoriteSession = useStore(
     (s) => s.setWorkflowFavoriteSession,
@@ -343,8 +345,10 @@ export default function Sidebar() {
   const [workspaceMenu, setWorkspaceMenu] = useState<{
     x: number;
     y: number;
-    path: string;
+    workspace: WorkspaceSummary;
   } | null>(null);
+  const [workspaceRemoveConfirm, setWorkspaceRemoveConfirm] =
+    useState<WorkspaceSummary | null>(null);
 
   const menuDeleteProtectionReason = useMemo(() => {
     if (!menu) return null;
@@ -369,6 +373,24 @@ export default function Sidebar() {
     runningSessions,
     sessions,
     sessionTree,
+  ]);
+
+  const workspaceMenuDeleteDisabledReason = useMemo(() => {
+    if (!workspaceMenu) return null;
+    const hasLiveSession = [
+      ...runningSessions,
+      ...aiEditingSessions,
+      ...chattingSessions,
+    ].some((sessionKey) => sessionKey.workspaceId === workspaceMenu.workspace.id);
+    return hasLiveSession
+      ? t(locale, 'sidebar.removeWorkspaceHistoryBlocked')
+      : null;
+  }, [
+    aiEditingSessions,
+    chattingSessions,
+    locale,
+    runningSessions,
+    workspaceMenu,
   ]);
 
   const onSessionContextMenu = useCallback(
@@ -403,12 +425,8 @@ export default function Sidebar() {
     [],
   );
 
-  const onWorkspaceContextMenu = useCallback(
+  const openWorkspaceMenu = useCallback(
     (event: React.MouseEvent, workspace: WorkspaceSummary) => {
-      const path = workspace.path?.trim();
-      if (!path) return;
-      event.preventDefault();
-      event.stopPropagation();
       const aside = event.currentTarget.closest('aside');
       if (!aside) return;
       const rect = aside.getBoundingClientRect();
@@ -416,15 +434,37 @@ export default function Sidebar() {
       setWorkspaceMenu({
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
-        path,
+        workspace,
       });
     },
     [],
   );
 
+  const onWorkspaceContextMenu = useCallback(
+    (event: React.MouseEvent, workspace: WorkspaceSummary) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openWorkspaceMenu(event, workspace);
+    },
+    [openWorkspaceMenu],
+  );
+
+  const onWorkspaceMoreClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>, workspace: WorkspaceSummary) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openWorkspaceMenu(event, workspace);
+    },
+    [openWorkspaceMenu],
+  );
+
   const handleOpenWorkspaceDirectory = useCallback(() => {
     if (!workspaceMenu) return;
-    const path = workspaceMenu.path;
+    const path = workspaceMenu.workspace.path.trim();
+    if (!path) {
+      setWorkspaceMenu(null);
+      return;
+    }
     setWorkspaceMenu(null);
     void openWorkspaceDirectory(path).then((opened) => {
       if (!opened && typeof window !== 'undefined') {
@@ -432,6 +472,45 @@ export default function Sidebar() {
       }
     });
   }, [workspaceMenu]);
+
+  const handleOpenWorkspaceSettings = useCallback(() => {
+    if (!workspaceMenu) return;
+    setProjectSettingsWorkspace(workspaceMenu.workspace);
+    setWorkspaceMenu(null);
+  }, [workspaceMenu]);
+
+  const handleRemoveWorkspaceHistory = useCallback(() => {
+    if (!workspaceMenu) return;
+    if (workspaceMenuDeleteDisabledReason) {
+      window.alert(workspaceMenuDeleteDisabledReason);
+      setWorkspaceMenu(null);
+      return;
+    }
+    const { workspace } = workspaceMenu;
+    setWorkspaceMenu(null);
+    setWorkspaceRemoveConfirm(workspace);
+  }, [workspaceMenu, workspaceMenuDeleteDisabledReason]);
+
+  const handleCancelRemoveWorkspaceHistory = useCallback(() => {
+    setWorkspaceRemoveConfirm(null);
+  }, []);
+
+  const handleConfirmRemoveWorkspaceHistory = useCallback(() => {
+    if (!workspaceRemoveConfirm) return;
+    const state = useStore.getState();
+    const hasLiveSession = [
+      ...state.runningSessions,
+      ...state.aiEditingSessions,
+      ...state.chattingSessions,
+    ].some((sessionKey) => sessionKey.workspaceId === workspaceRemoveConfirm.id);
+    if (hasLiveSession) {
+      window.alert(t(locale, 'sidebar.removeWorkspaceHistoryBlocked'));
+      setWorkspaceRemoveConfirm(null);
+      return;
+    }
+    deleteWorkspaceHistory(workspaceRemoveConfirm.id);
+    setWorkspaceRemoveConfirm(null);
+  }, [deleteWorkspaceHistory, locale, workspaceRemoveConfirm]);
 
   const handleDelete = useCallback(() => {
     if (!menu) return;
@@ -614,16 +693,17 @@ export default function Sidebar() {
 
   /** Close the context menu on Escape. */
   useEffect(() => {
-    if (!menu && !workspaceMenu) return;
+    if (!menu && !workspaceMenu && !workspaceRemoveConfirm) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setMenu(null);
         setWorkspaceMenu(null);
+        setWorkspaceRemoveConfirm(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [menu, workspaceMenu]);
+  }, [menu, workspaceMenu, workspaceRemoveConfirm]);
 
   useEffect(() => {
     const targets = workspaces.filter((workspace) => {
@@ -1117,12 +1197,12 @@ export default function Sidebar() {
                         </span>
                         <button
                           type="button"
-                          title="项目设置"
-                          aria-label="项目设置"
-                          onClick={() => setProjectSettingsWorkspace(workspace)}
+                          title={t(locale, 'sidebar.moreWorkspaceActions')}
+                          aria-label={t(locale, 'sidebar.moreWorkspaceActions')}
+                          onClick={(e) => onWorkspaceMoreClick(e, workspace)}
                           className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border-soft bg-bg-alt text-fg-faint transition-colors hover:border-accent hover:text-fg"
                         >
-                          <SettingsGlyph size={13} aria-hidden="true" />
+                          <MoreHorizontal size={14} aria-hidden="true" />
                         </button>
                       </div>
                     </div>
@@ -1538,7 +1618,19 @@ export default function Sidebar() {
           y={workspaceMenu.y}
           locale={locale}
           onOpenDirectory={handleOpenWorkspaceDirectory}
+          openDirectoryDisabled={!workspaceMenu.workspace.path?.trim()}
+          onOpenSettings={handleOpenWorkspaceSettings}
+          onRemoveHistory={handleRemoveWorkspaceHistory}
+          removeDisabledReason={workspaceMenuDeleteDisabledReason}
           onClose={() => setWorkspaceMenu(null)}
+        />
+      )}
+      {workspaceRemoveConfirm && (
+        <WorkspaceRemoveHistoryDialog
+          workspace={workspaceRemoveConfirm}
+          locale={locale}
+          onCancel={handleCancelRemoveWorkspaceHistory}
+          onConfirm={handleConfirmRemoveWorkspaceHistory}
         />
       )}
       {scheduleDialog && (
@@ -1555,17 +1647,121 @@ export default function Sidebar() {
   );
 }
 
+function WorkspaceRemoveHistoryDialog({
+  workspace,
+  locale,
+  onCancel,
+  onConfirm,
+}: {
+  workspace: WorkspaceSummary;
+  locale: Locale;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const messageLines = t(locale, 'sidebar.removeWorkspaceHistoryConfirm')
+    .replace('{name}', workspace.name)
+    .replace('{path}', workspace.path)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const [title, ...descriptionLines] = messageLines;
+  const hasWorkspacePath = workspace.path.trim().length > 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="workspace-remove-history-title"
+        aria-describedby="workspace-remove-history-description"
+        className="w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-border bg-panel shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="border-b border-border-soft bg-bg-alt px-5 py-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-rose-500/15 text-rose-300">
+              <Trash2 size={18} strokeWidth={2.2} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2
+                id="workspace-remove-history-title"
+                className="text-base font-semibold text-fg"
+              >
+                {title}
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={onCancel}
+              title={t(locale, 'common.close')}
+              aria-label={t(locale, 'common.close')}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-faint transition-colors hover:border-accent hover:text-fg"
+            >
+              <X size={15} strokeWidth={2.2} />
+            </button>
+          </div>
+        </header>
+        <div
+          id="workspace-remove-history-description"
+          className="space-y-2 px-5 py-4 text-sm leading-relaxed text-fg-dim"
+        >
+          {descriptionLines.map((line) => (
+            <p
+              key={line}
+              className={
+                hasWorkspacePath && line.includes(workspace.path)
+                  ? 'break-all font-mono text-xs text-fg-faint'
+                  : undefined
+              }
+            >
+              {line}
+            </p>
+          ))}
+        </div>
+        <footer className="flex justify-end gap-2 border-t border-border-soft bg-bg-alt px-5 py-3">
+          <button
+            type="button"
+            autoFocus
+            onClick={onCancel}
+            className="rounded-md border border-border bg-panel-2 px-3 py-1.5 text-sm text-fg-dim transition-colors hover:border-accent hover:text-fg"
+          >
+            {t(locale, 'common.cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-md border border-rose-400/50 bg-rose-500/15 px-3 py-1.5 text-sm font-semibold text-rose-200 transition-colors hover:bg-rose-500/25"
+          >
+            {t(locale, 'sidebar.removeWorkspaceHistoryConfirmAction')}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceContextMenu({
   x,
   y,
   locale,
   onOpenDirectory,
+  openDirectoryDisabled,
+  onOpenSettings,
+  onRemoveHistory,
+  removeDisabledReason,
   onClose,
 }: {
   x: number;
   y: number;
   locale: Locale;
   onOpenDirectory: () => void;
+  openDirectoryDisabled: boolean;
+  onOpenSettings: () => void;
+  onRemoveHistory: () => void;
+  removeDisabledReason: string | null;
   onClose: () => void;
 }) {
   return (
@@ -1584,11 +1780,30 @@ function WorkspaceContextMenu({
       >
         <button
           type="button"
+          disabled={openDirectoryDisabled}
           onClick={onOpenDirectory}
-          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-fg-dim"
         >
           <FolderOpen size={13} className="text-fg-faint" />
           <span>{t(locale, 'sidebar.openWorkspaceDirectory')}</span>
+        </button>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg"
+        >
+          <SettingsGlyph size={13} className="text-fg-faint" />
+          <span>{t(locale, 'sidebar.projectSettings')}</span>
+        </button>
+        <button
+          type="button"
+          disabled={removeDisabledReason != null}
+          title={removeDisabledReason ?? undefined}
+          onClick={onRemoveHistory}
+          className="flex w-full items-center gap-2 border-t border-border-soft px-3 py-2 text-left text-sm text-rose-300 transition-colors hover:bg-panel-2 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-rose-300"
+        >
+          <Trash2 size={13} className="text-rose-300/80" />
+          <span>{t(locale, 'sidebar.removeWorkspaceHistory')}</span>
         </button>
       </div>
     </>

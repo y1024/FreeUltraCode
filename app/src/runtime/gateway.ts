@@ -227,8 +227,11 @@ export async function runAgentWithInteraction(opts: {
           opts.selection,
         )
       : context.personalInstructions;
+    const baseWithGlobal = context.globalInstructions?.trim()
+      ? `${opts.basePrompt}\n\n${context.globalInstructions.trim()}`
+      : opts.basePrompt;
     const promptBase = appendPersonalInstructions(
-      opts.basePrompt,
+      baseWithGlobal,
       personalInstructions,
       opts.selection.adapter,
     );

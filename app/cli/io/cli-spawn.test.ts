@@ -4,7 +4,7 @@
  * assembly, stdin handling, JSONL parsing (text accumulation + result extraction
  * + tool_use breadcrumbs), timeout and cancellation behaviour.
  */
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -133,6 +133,58 @@ describe('spawnCliAgent (claude stream-json)', () => {
     expect(joined).toContain('"subject":"src/ir.ts"');
     expect(joined).toContain('PROMPT[hello-prompt]');
     expect(joined).toContain(' more');
+  });
+
+  it('injects project MCP servers into claude mcp-config', async () => {
+    const projectDir = join(dir, 'claude-mcp-project');
+    const fucHome = join(dir, 'fuc-home-claude');
+    mkdirSync(projectDir, { recursive: true });
+    const workspacesDir = join(fucHome, 'workspaces');
+    mkdirSync(workspacesDir, { recursive: true });
+    writeFileSync(
+      join(workspacesDir, 'index.json'),
+      JSON.stringify([
+        {
+          id: 'ws1',
+          path: projectDir,
+          metadata: {
+            projectSettings: {
+              mcp: {
+                enabled: true,
+                servers: [
+                  {
+                    id: 'ue-mcp-for-all-versions',
+                    enabled: true,
+                    transport: 'stdio',
+                    command: 'C:\\tools\\ue-mcp.exe',
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ]),
+      'utf8',
+    );
+    const previousFucHome = process.env.FUC_HOME;
+    process.env.FUC_HOME = fucHome;
+    try {
+      const argvOut = join(dir, 'argv-claude-mcp.json');
+      const bin = makeFakeCli('fake-claude-mcp', fakeClaudeBody(argvOut));
+      await spawnCliAgent('p', {
+        adapter: 'claude-code',
+        cliCommand: bin,
+        permission: 'full',
+        cwd: projectDir,
+      });
+      const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
+      expect(argv).toContain('--mcp-config');
+      expect(argv[argv.indexOf('--mcp-config') + 1]).toContain('settings.json');
+      expect(argv).not.toContain('--strict-mcp-config');
+    } finally {
+      if (previousFucHome == null) delete process.env.FUC_HOME;
+      else process.env.FUC_HOME = previousFucHome;
+    }
   });
 
   it('drops non-claude model labels and readonly maps to plan mode', async () => {
@@ -272,5 +324,68 @@ process.stdin.on('end', () => {
     expect(argv).toContain('-C');
     expect(argv).toContain('-o');
     expect(argv[argv.length - 1]).toBe('-');
+  });
+
+  it('injects project MCP servers into codex exec config overrides', async () => {
+    const projectDir = join(dir, 'codex-mcp-project');
+    const fucHome = join(dir, 'fuc-home');
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, '.keep'), '', 'utf8');
+    const workspacesDir = join(fucHome, 'workspaces');
+    mkdirSync(workspacesDir, { recursive: true });
+    writeFileSync(
+      join(workspacesDir, 'index.json'),
+      JSON.stringify([
+        {
+          id: 'ws1',
+          path: projectDir,
+          name: 'Project',
+          updatedAt: 1,
+          sessionCount: 0,
+          metadata: {
+            projectSettings: {
+              schemaVersion: 1,
+              mcp: {
+                enabled: true,
+                servers: [
+                  {
+                    id: 'ue-mcp-for-all-versions',
+                    enabled: true,
+                    transport: 'stdio',
+                    command: 'C:\\tools\\ue-mcp.exe',
+                    args: ['--host', '{workspace}'],
+                    env: { UE_PROJECT: '{workspace}' },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ]),
+      'utf8',
+    );
+    const previousFucHome = process.env.FUC_HOME;
+    process.env.FUC_HOME = fucHome;
+    try {
+      const argvOut = join(dir, 'argv-codex-mcp.json');
+      const bin = makeFakeCli('fake-codex-mcp', fakeCodexBody(argvOut));
+      await spawnCliAgent('codex-prompt', {
+        adapter: 'codex',
+        cliCommand: bin,
+        permission: 'full',
+        cwd: projectDir,
+      });
+      const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
+      expect(argv).toContain('mcp_servers.ue-mcp-for-all-versions.command="C:\\\\tools\\\\ue-mcp.exe"');
+      expect(argv).toContain(
+        `mcp_servers.ue-mcp-for-all-versions.args=["--host","${projectDir.replace(/\\/g, '\\\\')}"]`,
+      );
+      expect(argv).toContain(
+        `mcp_servers.ue-mcp-for-all-versions.env.UE_PROJECT="${projectDir.replace(/\\/g, '\\\\')}"`,
+      );
+    } finally {
+      if (previousFucHome == null) delete process.env.FUC_HOME;
+      else process.env.FUC_HOME = previousFucHome;
+    }
   });
 });

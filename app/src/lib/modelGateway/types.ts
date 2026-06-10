@@ -112,6 +112,7 @@ export interface GatewayTextRequest {
   }) => void;
   permission?: string;
   cwd?: string;
+  forceCli?: boolean;
   timeoutSeconds?: number;
   idleTimeoutSeconds?: number;
 }

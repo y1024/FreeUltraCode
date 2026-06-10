@@ -566,7 +566,13 @@ export function gatewayRouteEnv(
   >,
 ): Record<string, string> | undefined {
   const env: Record<string, string> = {};
-  if (route.transport === 'anthropic') {
+  if (route.adapter === 'gemini') {
+    if (route.apiKey) {
+      env.GEMINI_API_KEY = route.apiKey;
+      env.GOOGLE_API_KEY = route.apiKey;
+    }
+    if (route.baseUrl) env.GOOGLE_GEMINI_BASE_URL = route.baseUrl;
+  } else if (route.transport === 'anthropic') {
     if (route.apiKey) {
       env.ANTHROPIC_API_KEY = route.apiKey;
       env.ANTHROPIC_AUTH_TOKEN = route.apiKey;
@@ -591,12 +597,6 @@ export function gatewayRouteEnv(
     } else if (route.adapter === 'codex') {
       if (route.apiKey) env.OPENAI_API_KEY = route.apiKey;
       if (route.baseUrl) env.OPENAI_BASE_URL = route.baseUrl;
-    } else if (route.adapter === 'gemini') {
-      if (route.apiKey) {
-        env.GEMINI_API_KEY = route.apiKey;
-        env.GOOGLE_API_KEY = route.apiKey;
-      }
-      if (route.baseUrl) env.GOOGLE_GEMINI_BASE_URL = route.baseUrl;
     }
   }
   return Object.keys(env).length > 0 ? env : undefined;

@@ -9,6 +9,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::storage_paths;
 
@@ -32,6 +33,12 @@ const ROOT_DIRS: &[&str] = &[
 ];
 
 const INTERNAL_TOP_LEVEL_DIRS: &[&str] = &["backups", "quarantine", "tmp", "deleted", "migrations"];
+const MAX_BACKUPS_PER_FILE: usize = 24;
+const MAX_BACKUP_FILES_TOTAL: usize = 5000;
+const MAX_BACKUP_BYTES_TOTAL: u64 = 512 * 1024 * 1024;
+const BACKUP_PRUNE_INTERVAL_SECS: u64 = 300;
+
+static LAST_BACKUP_PRUNE_SECS: AtomicU64 = AtomicU64::new(0);
 
 fn ensure_dir(path: &Path, label: &str) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|e| format!("创建 {label} 失败: {e}"))
@@ -233,6 +240,119 @@ fn backup_existing_file(root: &Path, rel_path: &str, source: &Path) -> Result<()
             dest.display()
         )
     })?;
+    let _ = prune_backup_siblings(root, rel_path);
+    maybe_prune_backup_root(root);
+    Ok(())
+}
+
+fn modified_secs(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn prune_backup_siblings(root: &Path, rel_path: &str) -> Result<(), String> {
+    let (parent_segments, file_name) = rel_parent_and_name(rel_path)?;
+    let mut dir = root.join("backups");
+    for segment in parent_segments {
+        dir.push(segment);
+    }
+    let prefix = format!("{file_name}.backup-");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name.starts_with(&prefix) {
+            files.push((path, entry.metadata().and_then(|m| m.modified()).ok()));
+        }
+    }
+    if files.len() <= MAX_BACKUPS_PER_FILE {
+        return Ok(());
+    }
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+    for (idx, (path, _)) in files.into_iter().enumerate() {
+        if idx >= MAX_BACKUPS_PER_FILE {
+            let _ = fs::remove_file(path);
+        }
+    }
+    Ok(())
+}
+
+fn maybe_prune_backup_root(root: &Path) {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let last_secs = LAST_BACKUP_PRUNE_SECS.load(Ordering::Relaxed);
+    if now_secs.saturating_sub(last_secs) < BACKUP_PRUNE_INTERVAL_SECS {
+        return;
+    }
+    if LAST_BACKUP_PRUNE_SECS
+        .compare_exchange(last_secs, now_secs, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    let _ = prune_backup_root(root);
+}
+
+fn collect_backup_files(dir: &Path, out: &mut Vec<(PathBuf, u64, u64)>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_backup_files(&path, out);
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+        out.push((path.clone(), modified_secs(&path), size));
+    }
+}
+
+fn prune_backup_root(root: &Path) -> Result<(), String> {
+    let backup_root = root.join("backups");
+    if !backup_root.exists() {
+        return Ok(());
+    }
+    let mut files = Vec::new();
+    collect_backup_files(&backup_root, &mut files);
+    let total_bytes = files
+        .iter()
+        .fold(0_u64, |acc, (_, _, size)| acc.saturating_add(*size));
+    if files.len() <= MAX_BACKUP_FILES_TOTAL && total_bytes <= MAX_BACKUP_BYTES_TOTAL {
+        return Ok(());
+    }
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+    let mut kept = 0_usize;
+    let mut kept_bytes = 0_u64;
+    for (path, _, size) in files {
+        let within_count = kept < MAX_BACKUP_FILES_TOTAL;
+        let within_bytes = kept_bytes.saturating_add(size) <= MAX_BACKUP_BYTES_TOTAL;
+        if kept == 0 || (within_count && within_bytes) {
+            kept += 1;
+            kept_bytes = kept_bytes.saturating_add(size);
+            continue;
+        }
+        let _ = fs::remove_file(path);
+    }
     Ok(())
 }
 

@@ -1449,7 +1449,8 @@ html.fuc-stream-scheme-solarized-dark {
   overflow: hidden;
   border: 1px solid var(--stream-tool-card-border);
   background: var(--stream-tool-card-bg);
-  transition: border-color 0.12s, background 0.12s;
+  opacity: 0.82;
+  transition: border-color 0.12s, background 0.12s, opacity 0.12s;
 }
 .ai-tool-card::before {
   content: '';
@@ -1466,6 +1467,7 @@ html.fuc-stream-scheme-solarized-dark {
 .ai-tool-card[data-open='true'] {
   border-color: var(--stream-tool-card-hover-border);
   background: var(--stream-tool-card-hover-bg);
+  opacity: 1;
 }
 .ai-tool-card[data-status='running'] {
   background: var(--stream-tool-running-bg);
@@ -1484,6 +1486,10 @@ html.fuc-stream-scheme-solarized-dark {
 }
 .ai-tool-card[data-status='done']::before {
   background: var(--stream-tool-done-rail);
+}
+.ai-tool-status-done {
+  color: var(--stream-tool-meta);
+  opacity: 0.72;
 }
 .ai-tool-card[data-status='error'] {
   background: var(--stream-tool-error-bg);

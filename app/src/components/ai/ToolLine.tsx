@@ -52,7 +52,7 @@ export default function ToolLine({
       data-open={open ? 'true' : 'false'}
       data-status="idle"
     >
-      <div className="flex items-center gap-1.5 px-2 py-1 font-mono text-[11px] leading-snug">
+      <div className="flex items-center gap-1.5 px-2 py-0.5 font-mono text-[10px] leading-snug">
         {expandable ? (
           <button
             type="button"
@@ -62,14 +62,14 @@ export default function ToolLine({
             className="-ml-0.5 flex shrink-0 items-center text-fg-faint transition-colors hover:text-fg"
           >
             <ChevronRight
-              size={12}
+              size={11}
               className={'transition-transform ' + (open ? 'rotate-90' : '')}
             />
           </button>
         ) : (
           <span className="w-3 shrink-0" />
         )}
-        <ToolIcon name={name} size={12} className="shrink-0 text-fg-faint" />
+        <ToolIcon name={name} size={11} className="shrink-0 text-fg-faint" />
         <span className="shrink-0 font-medium text-fg-dim">{name}</span>
         {detail && (
           <span

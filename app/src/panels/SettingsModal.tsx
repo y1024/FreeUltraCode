@@ -241,6 +241,7 @@ import {
   GAME_EXPERT_LIMITS,
   GAME_EXPERT_IDS,
   getGameExpertCatalog,
+  gameExpertSlashCommand,
   type GameExpertDefinition,
   type GameExpertEngine,
   type GameExpertMode,
@@ -6434,6 +6435,8 @@ export function GameExpertSettingsPanel({
     return groups;
   }, [catalog]);
   const [activeGroup, setActiveGroup] = useState<string>('all');
+  // Tracks which expert's slash command was just copied, to flash a check icon.
+  const [copiedCommandId, setCopiedCommandId] = useState<string | null>(null);
   // If the active group disappears (e.g. its only expert was deleted), fall back
   // to 'all' so the grid never renders empty for a stale selection.
   useEffect(() => {
@@ -6754,6 +6757,36 @@ export function GameExpertSettingsPanel({
                     </button>
                   </div>
                 </div>
+                <button
+                  type="button"
+                  title={t(locale, 'settings.gameExperts.copyCommand')}
+                  aria-label={formatStatusMessage(
+                    t(locale, 'settings.gameExperts.copyCommand'),
+                    { command: gameExpertSlashCommand(expert) },
+                  )}
+                  onClick={() => {
+                    const command = gameExpertSlashCommand(expert);
+                    void navigator.clipboard?.writeText(command).then(
+                      () => {
+                        setCopiedCommandId(expert.id);
+                        window.setTimeout(() => {
+                          setCopiedCommandId((current) =>
+                            current === expert.id ? null : current,
+                          );
+                        }, 1500);
+                      },
+                      () => {},
+                    );
+                  }}
+                  className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded border border-border bg-bg px-2 py-1 font-mono text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg"
+                >
+                  {copiedCommandId === expert.id ? (
+                    <Check size={12} strokeWidth={2.4} className="text-accent" />
+                  ) : (
+                    <Copy size={12} strokeWidth={2.2} />
+                  )}
+                  <span className="truncate">{gameExpertSlashCommand(expert)}</span>
+                </button>
               </div>
             );
           })}

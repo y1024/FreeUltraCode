@@ -24,6 +24,10 @@ import type {
 export async function completeGatewayText(
   request: GatewayTextRequest,
 ): Promise<string> {
+  if (request.forceCli && isTauri()) {
+    return completeGatewayTextViaCli(request);
+  }
+
   if (request.route.transport === 'anthropic' && request.route.apiKey) {
     try {
       return await completeDirectWithUsage(request, completeAnthropic);

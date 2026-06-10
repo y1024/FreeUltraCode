@@ -42,6 +42,8 @@ import {
   sessionChangesCacheKey,
 } from '@/lib/sessionChanges';
 import {
+  listWorkspaceVcsStatus,
+  listWorkspaceVcsStatusShallow,
   listWorkspaceDirectory,
   openLocalPath,
   previewLocalFile,
@@ -51,6 +53,14 @@ import {
   type WorkspaceTreeEntry,
 } from '@/lib/tauri';
 import { useResizableWidth } from '@/lib/useResizableWidth';
+import {
+  buildWorkspaceVcsTreeStatus,
+  workspaceVcsStatusForEntry,
+  workspaceVcsStatusLabel,
+  type WorkspaceVcsTreeStatusIndex,
+  type WorkspaceVcsTreeStatusKind,
+  type WorkspaceVcsVirtualTreeEntry,
+} from '@/lib/workspaceVcsTreeStatus';
 import { useStore } from '@/store/useStore';
 
 type ProjectPanelTab = 'files' | 'changes';
@@ -103,7 +113,20 @@ type WorkspaceChangesState =
   | { status: 'ready'; snapshot: WorkspaceChanges; message?: undefined }
   | { status: 'error'; snapshot: WorkspaceChanges | null; message: string };
 
+type WorkspaceVcsTreeState =
+  | { status: 'idle'; snapshot: WorkspaceChanges | null; message?: undefined }
+  | { status: 'loading'; snapshot: WorkspaceChanges | null; message?: undefined }
+  | { status: 'ready'; snapshot: WorkspaceChanges; message?: undefined }
+  | { status: 'error'; snapshot: WorkspaceChanges | null; message: string };
+
 type WorkspaceChangeHunkStatus = 'added' | 'deleted' | 'modified';
+
+interface ProjectTreeRenderEntry {
+  entry: WorkspaceTreeEntry;
+  virtualDeleted: boolean;
+  vcsStatus?: WorkspaceVcsTreeStatusKind;
+  vcsScanning?: boolean;
+}
 
 interface WorkspaceChangeHunk {
   key: string;
@@ -174,6 +197,13 @@ const THUMBNAIL_ROOT_MARGIN = '280px 0px';
 const CONTEXT_MENU_WIDTH = 176;
 const CONTEXT_MENU_HEIGHT = 36;
 const CONTEXT_MENU_MARGIN = 8;
+const VCS_TREE_REFRESH_INTERVAL_MS = 30_000;
+const VCS_STATUS_ICON_SRC: Record<WorkspaceVcsTreeStatusKind, string> = {
+  added: `${import.meta.env.BASE_URL}vcs/tortoisegit/AddedIcon.png`,
+  modified: `${import.meta.env.BASE_URL}vcs/tortoisegit/ModifiedIcon.png`,
+  deleted: `${import.meta.env.BASE_URL}vcs/tortoisegit/DeletedIcon.png`,
+  renamed: `${import.meta.env.BASE_URL}vcs/tortoisegit/ReplacedIcon.png`,
+};
 
 function formatCachedAt(locale: string, timestamp: number): string {
   try {
@@ -214,6 +244,7 @@ function changeSourceLabel(source?: string): string {
   if (source === 'git') return 'Git';
   if (source === 'svn') return 'SVN';
   if (source === 'p4') return 'P4';
+  if (source === 'none') return '无 VCS';
   return '快照';
 }
 
@@ -494,8 +525,11 @@ function PreviewGlyph({
 function PreviewCard({
   entry,
   engine,
+  vcsStatus,
+  vcsScanning,
   thumbnail,
   thumbnailId,
+  draggable,
   onVisibilityChange,
   onOpen,
   onDragStart,
@@ -505,8 +539,11 @@ function PreviewCard({
 }: {
   entry: WorkspaceTreeEntry;
   engine: ProjectEngine;
+  vcsStatus?: WorkspaceVcsTreeStatusKind;
+  vcsScanning?: boolean;
   thumbnail?: ThumbnailState;
   thumbnailId: string;
+  draggable: boolean;
   onVisibilityChange: (key: string, visible: boolean) => void;
   onOpen: () => void;
   onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => void;
@@ -551,7 +588,7 @@ function PreviewCard({
     <button
       ref={cardRef}
       type="button"
-      draggable
+      draggable={draggable}
       onDragStart={onDragStart}
       onDrag={onDrag}
       onDragEnd={onDragEnd}
@@ -559,7 +596,8 @@ function PreviewCard({
       onClick={onOpen}
       title={entry.path}
       className={
-        'group min-w-0 cursor-grab overflow-hidden rounded-md border border-border bg-panel-2 text-left transition-colors hover:border-accent hover:bg-panel active:cursor-grabbing ' +
+        'group min-w-0 overflow-hidden rounded-md border border-border bg-panel-2 text-left transition-colors hover:border-accent hover:bg-panel ' +
+        (draggable ? 'cursor-grab active:cursor-grabbing ' : 'cursor-default ') +
         (entry.hidden ? 'opacity-65' : '')
       }
     >
@@ -584,6 +622,23 @@ function PreviewCard({
         )}
         {thumbnail?.status === 'loading' && (
           <Loader2 size={16} className="absolute right-1.5 top-1.5 animate-spin text-white/80" />
+        )}
+        {vcsStatus && (
+          <img
+            src={VCS_STATUS_ICON_SRC[vcsStatus]}
+            alt=""
+            title={workspaceVcsStatusLabel(vcsStatus)}
+            draggable={false}
+            className="absolute left-1.5 top-1.5 h-5 w-5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]"
+          />
+        )}
+        {!vcsStatus && vcsScanning && (
+          <span
+            title="正在扫描状态"
+            className="absolute left-1.5 top-1.5 inline-flex rounded-full bg-black/45 p-0.5 text-amber-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]"
+          >
+            <Loader2 size={18} className="animate-spin" />
+          </span>
         )}
         <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1.5 py-0.5 text-[9px] font-medium leading-none text-white/90">
           {label}
@@ -657,6 +712,114 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function VcsStatusOverlay({
+  status,
+  scanning,
+}: {
+  status?: WorkspaceVcsTreeStatusKind;
+  scanning?: boolean;
+}) {
+  if (!status && !scanning) return null;
+  return (
+    <span
+      title={status ? workspaceVcsStatusLabel(status) : '正在扫描状态'}
+      className="pointer-events-none absolute -bottom-1 -right-1 flex h-[13px] w-[13px] items-center justify-center"
+    >
+      {status ? (
+        <img
+          src={VCS_STATUS_ICON_SRC[status]}
+          alt=""
+          draggable={false}
+          className="h-4 w-4 max-w-none drop-shadow-[0_1px_1px_rgba(0,0,0,0.75)]"
+        />
+      ) : (
+        <Loader2
+          size={13}
+          className="animate-spin rounded-full bg-bg/85 p-[1px] text-amber-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.75)]"
+        />
+      )}
+    </span>
+  );
+}
+
+function rootPathForVirtualEntry(rootPath: string, relativePath: string): string {
+  const root = rootPath.replace(/[\\/]+$/g, '');
+  return root ? `${root}/${relativePath}` : relativePath;
+}
+
+function workspaceTreeEntryFromVirtual(
+  rootPath: string,
+  entry: WorkspaceVcsVirtualTreeEntry,
+): WorkspaceTreeEntry {
+  return {
+    name: entry.name,
+    path: rootPathForVirtualEntry(rootPath, entry.relativePath),
+    relativePath: entry.relativePath,
+    kind: entry.kind,
+    hidden: entry.name.startsWith('.'),
+    sizeBytes: null,
+    modifiedAtMs: null,
+  };
+}
+
+function compareTreeEntries(a: WorkspaceTreeEntry, b: WorkspaceTreeEntry): number {
+  if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+  return a.name
+    .toLocaleLowerCase()
+    .localeCompare(b.name.toLocaleLowerCase()) || a.name.localeCompare(b.name);
+}
+
+function buildRenderEntries(
+  entries: WorkspaceTreeEntry[],
+  directory: string,
+  rootPath: string,
+  vcsIndex: WorkspaceVcsTreeStatusIndex,
+): ProjectTreeRenderEntry[] {
+  const realPaths = new Set(entries.map((entry) => directoryKey(entry.relativePath)));
+  const showScanning = vcsIndex.scanScope === 'root' && vcsIndex.source !== 'none';
+  const renderEntries: ProjectTreeRenderEntry[] = entries.map((entry) => {
+    const vcsStatus = workspaceVcsStatusForEntry(entry, vcsIndex);
+    return {
+      entry,
+      virtualDeleted: false,
+      vcsStatus,
+      vcsScanning: showScanning && entry.kind === 'directory' && !vcsStatus,
+    };
+  });
+
+  for (const virtualEntry of vcsIndex.virtualEntriesByDirectory[directory] ?? []) {
+    const key = directoryKey(virtualEntry.relativePath);
+    if (realPaths.has(key)) continue;
+    renderEntries.push({
+      entry: workspaceTreeEntryFromVirtual(rootPath, virtualEntry),
+      virtualDeleted: true,
+      vcsStatus: virtualEntry.status,
+    });
+  }
+
+  return renderEntries.sort((a, b) => compareTreeEntries(a.entry, b.entry));
+}
+
+function treeVcsStatusLine(
+  workspaceLabel: string,
+  state: WorkspaceVcsTreeState,
+): string {
+  if (state.status === 'loading') {
+    const source = state.snapshot?.source && state.snapshot.source !== 'none'
+      ? changeSourceLabel(state.snapshot.source)
+      : 'VCS';
+    if (state.snapshot?.scanScope === 'root' && state.snapshot.source !== 'none') {
+      return `${workspaceLabel} · ${source} · 根目录 ${state.snapshot.files.length} 项 · 正在扫描子目录...`;
+    }
+    return `正在刷新 ${source} 状态...`;
+  }
+  if (state.status === 'error') return `VCS 状态刷新失败：${state.message}`;
+  if (state.snapshot?.source && state.snapshot.source !== 'none') {
+    return `${workspaceLabel} · ${changeSourceLabel(state.snapshot.source)} · ${state.snapshot.files.length} 项改动`;
+  }
+  return workspaceLabel;
+}
+
 export default function ProjectFileTree() {
   const locale = useStore((s) => s.locale);
   const workspaces = useStore((s) => s.workspaces);
@@ -686,6 +849,10 @@ export default function ProjectFileTree() {
     status: 'idle',
     snapshot: null,
   });
+  const [vcsTreeState, setVcsTreeState] = useState<WorkspaceVcsTreeState>({
+    status: 'idle',
+    snapshot: null,
+  });
   const [selectedChangeKey, setSelectedChangeKey] = useState<string | null>(null);
   const [previewDirectories, setPreviewDirectories] = useState<Record<string, string>>({});
   const [thumbnailCache, setThumbnailCache] = useState<ThumbnailCache>({});
@@ -693,6 +860,8 @@ export default function ProjectFileTree() {
   const [contextMenu, setContextMenu] = useState<ProjectEntryContextMenuState>(null);
   const visibleThumbnailsRef = useRef<ThumbnailVisibility>({});
   const changesLoadSeqRef = useRef(0);
+  const vcsTreeLoadSeqRef = useRef(0);
+  const vcsTreeRefreshInFlightRef = useRef(false);
   const activeSessionBusyRef = useRef(false);
 
   useEffect(() => {
@@ -767,6 +936,10 @@ export default function ProjectFileTree() {
   const previewDirectoryKey = directoryKey(previewDirectory);
   const previewDirectoryState = activeTree?.directories[previewDirectoryKey];
   const previewDirectoryEntries = previewDirectoryState?.entries ?? [];
+  const vcsTreeStatusIndex = useMemo(
+    () => buildWorkspaceVcsTreeStatus(vcsTreeState.snapshot),
+    [vcsTreeState.snapshot],
+  );
 
   const { width, onResizeStart } = useResizableWidth({
     storageKey: 'freeultracode.projectFileTreeWidth.v1',
@@ -879,6 +1052,60 @@ export default function ProjectFileTree() {
       window.localStorage.setItem('freeultracode.projectRightPanelTab.v1', nextTab);
     }
   }, []);
+
+  const refreshVcsTreeStatus = useCallback(() => {
+    if (!activeWorkspacePath || vcsTreeRefreshInFlightRef.current) return;
+    vcsTreeRefreshInFlightRef.current = true;
+    const seq = vcsTreeLoadSeqRef.current + 1;
+    vcsTreeLoadSeqRef.current = seq;
+    setVcsTreeState((prev) => ({
+      status: 'loading',
+      snapshot: prev.snapshot,
+    }));
+
+    void (async () => {
+      try {
+        const shallowSnapshot = await listWorkspaceVcsStatusShallow(activeWorkspacePath);
+        if (vcsTreeLoadSeqRef.current !== seq) return;
+        setVcsTreeState({ status: 'loading', snapshot: shallowSnapshot });
+      } catch {
+        // Fall through to the full scan; it reports the real error if the backend is unavailable.
+      }
+
+      try {
+        const snapshot = await listWorkspaceVcsStatus(activeWorkspacePath);
+        if (vcsTreeLoadSeqRef.current !== seq) return;
+        setVcsTreeState({ status: 'ready', snapshot });
+      } catch (err) {
+        if (vcsTreeLoadSeqRef.current !== seq) return;
+        setVcsTreeState((prev) => ({
+          status: 'error',
+          snapshot: prev.snapshot,
+          message: errorMessage(err),
+        }));
+      } finally {
+        if (vcsTreeLoadSeqRef.current === seq) {
+          vcsTreeRefreshInFlightRef.current = false;
+        }
+      }
+    })();
+  }, [activeWorkspacePath]);
+
+  useEffect(() => {
+    vcsTreeLoadSeqRef.current = vcsTreeLoadSeqRef.current + 1;
+    vcsTreeRefreshInFlightRef.current = false;
+    setVcsTreeState({ status: 'idle', snapshot: null });
+    if (!activeWorkspacePath) return;
+
+    refreshVcsTreeStatus();
+    if (typeof window === 'undefined') return;
+
+    const interval = window.setInterval(
+      refreshVcsTreeStatus,
+      VCS_TREE_REFRESH_INTERVAL_MS,
+    );
+    return () => window.clearInterval(interval);
+  }, [activeWorkspacePath, refreshVcsTreeStatus]);
 
   useEffect(() => {
     if (!activeWorkspace || !activeWorkspacePath) return;
@@ -1061,7 +1288,7 @@ export default function ProjectFileTree() {
   }, [activeWorkspacePath, contextMenu]);
 
   const toggleDirectory = useCallback(
-    (entry: WorkspaceTreeEntry) => {
+    (entry: WorkspaceTreeEntry, options: { skipLoad?: boolean } = {}) => {
       if (!activeWorkspace || !activeWorkspacePath) return;
       const key = directoryKey(entry.relativePath);
       const tree = cacheRef.current[activeWorkspace.id];
@@ -1084,7 +1311,7 @@ export default function ProjectFileTree() {
         return next;
       });
 
-      if (nextExpanded && !tree?.directories[key]) {
+      if (nextExpanded && !tree?.directories[key] && !options.skipLoad) {
         void loadDirectory(activeWorkspace.id, activeWorkspacePath, key);
       }
     },
@@ -1097,10 +1324,11 @@ export default function ProjectFileTree() {
       ...prev,
       [activeWorkspace.id]: '',
     }));
+    refreshVcsTreeStatus();
     void loadDirectory(activeWorkspace.id, activeWorkspacePath, '', {
       force: true,
     });
-  }, [activeWorkspace, activeWorkspacePath, loadDirectory]);
+  }, [activeWorkspace, activeWorkspacePath, loadDirectory, refreshVcsTreeStatus]);
 
   const refreshSessionChanges = useCallback(() => {
     if (!workspaceChangesRootPath || !changesCacheKey) return;
@@ -1149,22 +1377,24 @@ export default function ProjectFileTree() {
     if (!wasBusy || activeSessionBusy) return;
     if (!workspaceChangesRootPath || !changesCacheKey) return;
     refreshSessionChanges();
+    refreshVcsTreeStatus();
   }, [
     activeSessionBusy,
     workspaceChangesRootPath,
     changesCacheKey,
     refreshSessionChanges,
+    refreshVcsTreeStatus,
   ]);
 
   const openPreviewDirectory = useCallback(
-    (relativePath: string) => {
+    (relativePath: string, options: { skipLoad?: boolean } = {}) => {
       if (!activeWorkspace || !activeWorkspacePath) return;
       const key = directoryKey(relativePath);
       setPreviewDirectories((prev) => ({
         ...prev,
         [activeWorkspace.id]: key,
       }));
-      if (!cacheRef.current[activeWorkspace.id]?.directories[key]) {
+      if (!options.skipLoad && !cacheRef.current[activeWorkspace.id]?.directories[key]) {
         void loadDirectory(activeWorkspace.id, activeWorkspacePath, key);
       }
     },
@@ -1176,9 +1406,19 @@ export default function ProjectFileTree() {
       if (!activeTree) return null;
       const key = directoryKey(relativePath);
       const directory = activeTree.directories[key];
+      const renderEntries = buildRenderEntries(
+        directory?.entries ?? [],
+        key,
+        activeWorkspacePath,
+        vcsTreeStatusIndex,
+      );
 
-      if (!directory) return null;
-      if (directory.status === 'loading' && directory.entries.length === 0) {
+      if (!directory && renderEntries.length === 0) return null;
+      if (
+        directory?.status === 'loading' &&
+        directory.entries.length === 0 &&
+        renderEntries.length === 0
+      ) {
         return (
           <div
             className="flex h-7 items-center gap-2 px-2 text-xs text-fg-faint"
@@ -1189,7 +1429,11 @@ export default function ProjectFileTree() {
           </div>
         );
       }
-      if (directory.status === 'error' && directory.entries.length === 0) {
+      if (
+        directory?.status === 'error' &&
+        directory.entries.length === 0 &&
+        renderEntries.length === 0
+      ) {
         return (
           <div
             className="flex items-start gap-2 px-2 py-1.5 text-xs leading-snug text-status-error"
@@ -1203,31 +1447,55 @@ export default function ProjectFileTree() {
 
       return (
         <>
-          {directory.entries.map((entry) => {
+          {renderEntries.map(({ entry, virtualDeleted, vcsStatus, vcsScanning }) => {
             const entryKey = directoryKey(entry.relativePath);
             const expanded = activeTree.expanded[entryKey] === true;
             const isDirectory = entry.kind === 'directory';
+            const isDeleted = vcsStatus === 'deleted';
+            const iconStatusClass = isDirectory ? 'text-accent-2' : 'text-fg-faint';
 
             return (
-              <div key={entry.path}>
+              <div key={`${virtualDeleted ? 'deleted:' : ''}${entry.path}`}>
                 <button
                   type="button"
-                  draggable
-                  onDragStart={(event) => startEntryDrag(event, entry)}
+                  draggable={!virtualDeleted}
+                  onDragStart={(event) => {
+                    if (virtualDeleted) {
+                      event.preventDefault();
+                      return;
+                    }
+                    startEntryDrag(event, entry);
+                  }}
                   onDrag={trackEntryDrag}
                   onDragEnd={finishEntryDrag}
-                  onContextMenu={(event) => openEntryContextMenu(event, entry)}
+                  onContextMenu={(event) => {
+                    if (virtualDeleted) {
+                      event.preventDefault();
+                      return;
+                    }
+                    openEntryContextMenu(event, entry);
+                  }}
                   onClick={() => {
                     if (isDirectory) {
-                      toggleDirectory(entry);
-                    } else {
+                      toggleDirectory(entry, { skipLoad: virtualDeleted });
+                    } else if (!virtualDeleted && !isDeleted) {
                       setPreviewRef(fileRefFromEntry(entry));
                     }
                   }}
-                  title={entry.path}
+                  title={
+                    vcsStatus
+                      ? `${entry.path}\n${workspaceVcsStatusLabel(vcsStatus)}`
+                      : vcsScanning
+                        ? `${entry.path}\n正在扫描状态`
+                      : entry.path
+                  }
                   className={
-                    'group flex h-7 w-full min-w-0 cursor-grab items-center gap-1.5 px-2 text-left text-xs transition-colors hover:bg-panel-2 hover:text-fg active:cursor-grabbing ' +
-                    (entry.hidden ? 'text-fg-faint' : 'text-fg-dim')
+                    'group flex h-7 w-full min-w-0 items-center gap-1.5 px-2 text-left text-xs transition-colors hover:bg-panel-2 hover:text-fg ' +
+                    (virtualDeleted
+                      ? 'cursor-default '
+                      : 'cursor-grab active:cursor-grabbing ') +
+                    (entry.hidden ? 'text-fg-faint ' : 'text-fg-dim ') +
+                    (isDeleted ? 'opacity-80' : '')
                   }
                   style={{ paddingLeft: 8 + level * 14 }}
                 >
@@ -1242,22 +1510,27 @@ export default function ProjectFileTree() {
                   ) : (
                     <span className="w-[13px] shrink-0" />
                   )}
-                  {isDirectory ? (
-                    expanded ? (
-                      <FolderOpen size={14} className="shrink-0 text-accent-2" />
+                  <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
+                    {isDirectory ? (
+                      expanded ? (
+                        <FolderOpen size={14} className={'shrink-0 ' + iconStatusClass} />
+                      ) : (
+                        <Folder size={14} className={'shrink-0 ' + iconStatusClass} />
+                      )
                     ) : (
-                      <Folder size={14} className="shrink-0 text-accent-2" />
-                    )
-                  ) : (
-                    <File size={14} className="shrink-0 text-fg-faint" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                      <File size={14} className={'shrink-0 ' + iconStatusClass} />
+                    )}
+                    <VcsStatusOverlay status={vcsStatus} scanning={vcsScanning} />
+                  </span>
+                  <span className={'min-w-0 flex-1 truncate ' + (isDeleted ? 'line-through' : '')}>
+                    {entry.name}
+                  </span>
                 </button>
                 {isDirectory && expanded && renderDirectory(entry.relativePath, level + 1)}
               </div>
             );
           })}
-          {directory.status === 'ready' && directory.truncated && (
+          {directory?.status === 'ready' && directory.truncated && (
             <div
               className="px-2 py-1 text-[11px] text-fg-faint"
               style={{ paddingLeft: 10 + level * 14 }}
@@ -1268,7 +1541,7 @@ export default function ProjectFileTree() {
               )}
             </div>
           )}
-          {directory.status === 'error' && directory.entries.length > 0 && (
+          {directory?.status === 'error' && directory.entries.length > 0 && (
             <div
               className="px-2 py-1 text-[11px] text-status-error"
               style={{ paddingLeft: 10 + level * 14 }}
@@ -1281,17 +1554,25 @@ export default function ProjectFileTree() {
     },
     [
       activeTree,
+      activeWorkspacePath,
       finishEntryDrag,
       locale,
       openEntryContextMenu,
       startEntryDrag,
       toggleDirectory,
       trackEntryDrag,
+      vcsTreeStatusIndex,
     ],
   );
 
   const renderPreviewMode = useCallback((): ReactNode => {
     const directory = previewDirectoryState;
+    const renderEntries = buildRenderEntries(
+      directory?.entries ?? [],
+      previewDirectoryKey,
+      activeWorkspacePath,
+      vcsTreeStatusIndex,
+    );
     const segments = previewDirectoryKey
       ? previewDirectoryKey.split('/').filter(Boolean)
       : [];
@@ -1332,40 +1613,64 @@ export default function ProjectFileTree() {
           </span>
         </div>
 
-        {!directory || (directory.status === 'loading' && directory.entries.length === 0) ? (
+        {(!directory && renderEntries.length === 0) ||
+        (directory?.status === 'loading' &&
+          directory.entries.length === 0 &&
+          renderEntries.length === 0) ? (
           <div className="flex h-16 items-center justify-center gap-2 text-xs text-fg-faint">
             <Loader2 size={14} className="animate-spin text-accent" />
             <span>{t(locale, 'projectTree.loading')}</span>
           </div>
-        ) : directory.status === 'error' && directory.entries.length === 0 ? (
+        ) : directory?.status === 'error' &&
+          directory.entries.length === 0 &&
+          renderEntries.length === 0 ? (
           <div className="flex items-start gap-2 rounded-md border border-status-error/40 bg-status-error/10 p-2 text-xs leading-snug text-status-error">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span className="break-words">{directory.message}</span>
           </div>
-        ) : directory.entries.length === 0 ? (
+        ) : renderEntries.length === 0 ? (
           <div className="px-2 py-8 text-center text-xs text-fg-faint">
             {t(locale, 'projectTree.previewEmpty')}
           </div>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-2">
-            {directory.entries.map((entry) => {
+            {renderEntries.map(({ entry, virtualDeleted, vcsStatus, vcsScanning }) => {
               const key = thumbnailKey(entry);
               return (
                 <PreviewCard
-                  key={entry.path}
+                  key={`${virtualDeleted ? 'deleted:' : ''}${entry.path}`}
                   entry={entry}
                   engine={projectEngine}
+                  vcsStatus={vcsStatus}
+                  vcsScanning={vcsScanning}
                   thumbnailId={key}
-                  thumbnail={isImageEntry(entry) ? thumbnailCache[key] : undefined}
+                  draggable={!virtualDeleted}
+                  thumbnail={
+                    !virtualDeleted && isImageEntry(entry) ? thumbnailCache[key] : undefined
+                  }
                   onVisibilityChange={updateThumbnailVisibility}
-                  onDragStart={(event) => startEntryDrag(event, entry)}
+                  onDragStart={(event) => {
+                    if (virtualDeleted) {
+                      event.preventDefault();
+                      return;
+                    }
+                    startEntryDrag(event, entry);
+                  }}
                   onDrag={trackEntryDrag}
                   onDragEnd={finishEntryDrag}
-                  onContextMenu={(event) => openEntryContextMenu(event, entry)}
+                  onContextMenu={(event) => {
+                    if (virtualDeleted) {
+                      event.preventDefault();
+                      return;
+                    }
+                    openEntryContextMenu(event, entry);
+                  }}
                   onOpen={() => {
                     if (entry.kind === 'directory') {
-                      openPreviewDirectory(entry.relativePath);
-                    } else {
+                      openPreviewDirectory(entry.relativePath, {
+                        skipLoad: virtualDeleted,
+                      });
+                    } else if (!virtualDeleted && vcsStatus !== 'deleted') {
                       setPreviewRef(fileRefFromEntry(entry));
                     }
                   }}
@@ -1401,6 +1706,7 @@ export default function ProjectFileTree() {
     thumbnailCache,
     trackEntryDrag,
     updateThumbnailVisibility,
+    vcsTreeStatusIndex,
   ]);
 
   const renderSessionChanges = useCallback((): ReactNode => {
@@ -1444,7 +1750,9 @@ export default function ProjectFileTree() {
     if (snapshot.files.length === 0) {
       return (
         <div className="px-3 py-8 text-center text-xs leading-relaxed text-fg-faint">
-          当前工作区暂无文件改动。
+          {snapshot.truncated
+            ? '已完成部分扫描，未发现可显示改动；部分目录可能未收集。'
+            : '当前工作区暂无文件改动。'}
         </div>
       );
     }
@@ -1615,7 +1923,7 @@ export default function ProjectFileTree() {
 
         {snapshot.truncated && (
           <div className="text-[11px] text-fg-faint">
-            改动过多，已截断显示。
+            改动较多或部分 VCS 分片超时，已显示当前可用结果。
           </div>
         )}
       </div>
@@ -1638,6 +1946,10 @@ export default function ProjectFileTree() {
   const activeSnapshot = changesState.snapshot;
   const changesRootTitle =
     activeSnapshot?.rootPath ?? workspaceChangesRootPath ?? activeWorkspacePath;
+  const projectTreeStatusTitle = treeVcsStatusLine(
+    activeWorkspace?.name ?? t(locale, 'projectTree.noWorkspace'),
+    vcsTreeState,
+  );
 
   return (
     <>
@@ -1738,7 +2050,7 @@ export default function ProjectFileTree() {
           >
             {panelTab === 'changes' && activeSnapshot
               ? `${changeSourceLabel(activeSnapshot.source)} · ${formatCachedAt(locale, activeSnapshot.generatedAtMs)}`
-              : activeWorkspace?.name ?? t(locale, 'projectTree.noWorkspace')}
+              : projectTreeStatusTitle}
           </div>
         </header>
 
@@ -1767,7 +2079,11 @@ export default function ProjectFileTree() {
             <RefreshCw
               size={14}
               className={
-                rootLoading || changesLoading ? 'animate-spin text-accent' : 'text-fg-faint'
+                rootLoading ||
+                changesLoading ||
+                (panelTab === 'files' && vcsTreeState.status === 'loading')
+                  ? 'animate-spin text-accent'
+                  : 'text-fg-faint'
               }
             />
             <span>
@@ -1777,6 +2093,8 @@ export default function ProjectFileTree() {
                   : '刷新改动'
                 : rootLoading
                   ? t(locale, 'projectTree.refreshing')
+                  : vcsTreeState.status === 'loading'
+                    ? '刷新状态'
                   : t(locale, 'projectTree.refresh')}
             </span>
           </button>

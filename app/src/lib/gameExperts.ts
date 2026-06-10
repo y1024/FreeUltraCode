@@ -2011,6 +2011,25 @@ export interface GameExpertMenuEntry {
   insertText: string;
 }
 
+/**
+ * CONTRACT: the canonical, stable per-expert slash command.
+ *
+ * Returns a single-token, space-free command (`/<id>`) that always round-trips
+ * through parseGameExpertCommand to pin exactly this expert, no matter the UI
+ * locale. The expert id is registered as a resolution alias (see
+ * resolveGameExpertPath), so the command resolves even when the expert is
+ * toggled off in settings — an explicit pick is itself the opt-in. Internal
+ * whitespace in custom ids is collapsed to a dash so the command stays a single
+ * token; the slug normalizer strips it again on the way back in, so the
+ * round-trip still lands on the same expert.
+ *
+ * This is the command surfaced on each expert card and in the `/` menu, so the
+ * UI label and the actual routing key never drift.
+ */
+export function gameExpertSlashCommand(expert: GameExpertDefinition): string {
+  return `/${expert.id.trim().replace(/\s+/g, '-')}`;
+}
+
 export function gameExpertMenuEntries(
   settings: GameExpertSettings,
   locale: Locale,
@@ -2057,12 +2076,16 @@ export function gameExpertMenuEntries(
       });
     }
     const expertLabel = localizedGameExpertName(expert, locale);
-    const groupLabel = localizedGameGroupLabel(expert.group, locale);
+    const command = gameExpertSlashCommand(expert);
     entries.push({
       id: `game-expert:expert:${expert.id}`,
-      name: `/${root}/${groupLabel}/${expertLabel}`,
+      // Use the stable single-token command (`/<id>`) as the inserted text so it
+      // always round-trips to this exact expert. Localized names can contain
+      // spaces (e.g. `Unity 专家`, `UI 程序`), and the command parser truncates
+      // at the first space — a localized path would mis-resolve to the group.
+      name: `${command}  ·  ${expertLabel}`,
       detail: expert.summary,
-      insertText: `/${root}/${groupLabel}/${expertLabel} `,
+      insertText: `${command} `,
     });
   }
   return entries;

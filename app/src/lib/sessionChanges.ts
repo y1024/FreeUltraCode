@@ -77,7 +77,6 @@ export async function refreshCachedSessionChanges(
   if (!rootPath || !cacheKey) {
     throw new Error('缺少工作区或会话。');
   }
-  await ensureWorkspaceChangesBaseline(rootPath, cacheKey, baselineAtMs);
   const snapshot = await listWorkspaceChanges(rootPath, cacheKey, baselineAtMs);
   writeCachedSessionChanges(cacheKey, snapshot);
   return snapshot;

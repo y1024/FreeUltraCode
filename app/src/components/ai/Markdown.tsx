@@ -1,5 +1,6 @@
 import {
   memo,
+  useMemo,
   isValidElement,
   cloneElement,
   type ReactElement,
@@ -9,6 +10,7 @@ import ReactMarkdown, {
   defaultUrlTransform,
   type Components,
 } from 'react-markdown';
+import type { PluggableList } from 'unified';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
@@ -74,9 +76,31 @@ function MarkdownImpl({
   onOpenFile?: OpenFileFn;
   cwd?: string;
 }) {
-  const normalized = protectWindowsPaths(normalizeMath(text));
-  const src = streaming ? repairMarkdown(normalized) : normalized;
-  const defaultModelAnimations = extractDefaultModelAnimations(src);
+  const normalized = useMemo(
+    () => protectWindowsPaths(normalizeMath(text)),
+    [text],
+  );
+  const src = useMemo(
+    () => (streaming ? repairMarkdown(normalized) : normalized),
+    [normalized, streaming],
+  );
+  const defaultModelAnimations = useMemo(
+    () => extractDefaultModelAnimations(src),
+    [src],
+  );
+  const rehypePlugins = useMemo<PluggableList>(
+    () =>
+      streaming
+        ? [rehypeKatex]
+        : [
+            [
+              rehypeHighlight,
+              { detect: true, languages: HL_LANGUAGES, aliases: HL_ALIASES },
+            ],
+            rehypeKatex,
+          ],
+    [streaming],
+  );
 
   // Recursively walk rendered children, replacing bare file references inside
   // plain-text leaves with clickable chips. Elements (e.g. <strong>, <code>,
@@ -231,13 +255,7 @@ function MarkdownImpl({
     <div className="ai-markdown ai-stream-markdown text-sm leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
-        rehypePlugins={[
-          [
-            rehypeHighlight,
-            { detect: true, languages: HL_LANGUAGES, aliases: HL_ALIASES },
-          ],
-          rehypeKatex,
-        ]}
+        rehypePlugins={rehypePlugins}
         components={components}
         urlTransform={markdownUrlTransform}
       >

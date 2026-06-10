@@ -226,6 +226,48 @@ export interface ProjectMcpProbeResult {
   checkedAtMs: number;
 }
 
+export interface ProjectLspProbeServerConfig {
+  id: string;
+  command?: string | null;
+  args?: string[] | null;
+}
+
+export interface ProjectLspProbeResult {
+  serverId: string;
+  ok: boolean;
+  status: string;
+  message: string;
+  resolvedCommand?: string | null;
+  checkedAtMs: number;
+}
+
+export interface ProjectLspInstallCommand {
+  label: string;
+  command: string;
+  args: string[];
+  platforms?: CliPlatform[] | null;
+}
+
+export interface ProjectLspInstallRequest {
+  serverId: string;
+  commands: ProjectLspInstallCommand[];
+  cwd?: string | null;
+}
+
+export interface ProjectLspInstallResult {
+  serverId: string;
+  ok: boolean;
+  status: string;
+  message: string;
+  commandLine?: string | null;
+  stdout: string;
+  stderr: string;
+  exitCode?: number | null;
+  timedOut: boolean;
+  platform: CliPlatform;
+  checkedAtMs: number;
+}
+
 /** Stable server id shared by one-click install + the recommended UE suggestion. */
 export const UE_MCP_SERVER_ID = 'ue-mcp-for-all-versions';
 
@@ -262,6 +304,8 @@ export interface UeMcpSetupResult {
   changedFiles: string[];
   notes: string[];
   warnings: string[];
+  unrealEditorRunning?: boolean;
+  restartRequired?: boolean;
   error?: string | null;
   binaryPath: string;
   serverCommand: string;
@@ -298,6 +342,7 @@ export interface WorkspaceChanges {
   source?: string;
   files: WorkspaceChangeFile[];
   truncated: boolean;
+  scanScope?: 'root' | 'full' | string;
 }
 
 export interface WorkspaceChangeSnapshotFile {
@@ -520,6 +565,47 @@ export interface CliOpts {
 
 let __cliSeq = 0;
 
+const STREAM_PROGRESS_FLUSH_MS = 80;
+
+interface ProgressBatcher {
+  push(text: string): void;
+  flush(): void;
+}
+
+function createProgressBatcher(
+  onProgress: (text: string) => void,
+  delayMs = STREAM_PROGRESS_FLUSH_MS,
+): ProgressBatcher {
+  let pending = '';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearTimer = () => {
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+
+  const flush = () => {
+    clearTimer();
+    if (!pending) return;
+    const text = pending;
+    pending = '';
+    onProgress(text);
+  };
+
+  return {
+    push(text) {
+      if (!text) return;
+      pending += text;
+      if (timer === undefined) {
+        timer = setTimeout(flush, delayMs);
+        (timer as { unref?: () => void }).unref?.();
+      }
+    },
+    flush,
+  };
+}
+
 interface AiCliResult {
   text: string;
   usage?: unknown;
@@ -548,15 +634,18 @@ export async function aiEditViaCli(
   // returned regardless of whether any progress chunks arrive).
   const unlisteners: UnlistenFn[] = [];
   let usageSeen = false;
+  const progressBatcher = opts.onProgress
+    ? createProgressBatcher(opts.onProgress)
+    : null;
   if (opts.onProgress || opts.onUsage) {
     const listen = await getListen();
-    if (opts.onProgress) {
+    if (progressBatcher) {
       unlisteners.push(
         await listen<{ runId: string; text: string }>(
           'ai-cli-progress',
           (event) => {
             if (event.payload?.runId === runId) {
-              opts.onProgress!(event.payload.text);
+              progressBatcher.push(event.payload.text);
             }
           },
         ),
@@ -604,7 +693,11 @@ export async function aiEditViaCli(
     }
     return result;
   } finally {
-    for (const unlisten of unlisteners) unlisten();
+    try {
+      progressBatcher?.flush();
+    } finally {
+      for (const unlisten of unlisteners) unlisten();
+    }
   }
 }
 
@@ -886,6 +979,28 @@ export async function probeProjectMcpServer(
   });
 }
 
+/** Probe whether an LSP server command is available locally. */
+export async function probeProjectLspServer(
+  server: ProjectLspProbeServerConfig,
+): Promise<ProjectLspProbeResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<ProjectLspProbeResult>('project_lsp_probe', { server });
+}
+
+/** Install one catalog-backed LSP server by running a structured installer command. */
+export async function installProjectLspServer(
+  request: ProjectLspInstallRequest,
+): Promise<ProjectLspInstallResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<ProjectLspInstallResult>('project_lsp_install', { request });
+}
+
 /**
  * Ensure the pinned Unreal MCP binary (ue-mcp-for-all-versions) is downloaded
  * into the global tools cache and sha256-verified. Idempotent: returns the
@@ -945,6 +1060,32 @@ export async function listWorkspaceChanges(
     rootPath,
     cacheKey,
     baselineAtMs,
+  });
+}
+
+/** Read lightweight VCS status for project-tree icon overlays. No diff hunks. */
+export async function listWorkspaceVcsStatus(
+  rootPath: string,
+): Promise<WorkspaceChanges> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<WorkspaceChanges>('workspace_vcs_status', {
+    rootPath,
+  });
+}
+
+/** Read root-level VCS status first so project-tree overlays can update incrementally. */
+export async function listWorkspaceVcsStatusShallow(
+  rootPath: string,
+): Promise<WorkspaceChanges> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<WorkspaceChanges>('workspace_vcs_status_shallow', {
+    rootPath,
   });
 }
 
@@ -1100,12 +1241,17 @@ export async function runUltracode(
   const runId = opts.runId ?? `ultracode_${Date.now()}_${__cliSeq}`;
 
   let unlisten: UnlistenFn | undefined;
+  const progressBatcher = opts.onProgress
+    ? createProgressBatcher(opts.onProgress)
+    : null;
   if (opts.onProgress) {
     const listen = await getListen();
     unlisten = await listen<{ runId: string; text: string }>(
       'ai-cli-progress',
       (event) => {
-        if (event.payload?.runId === runId) opts.onProgress!(event.payload.text);
+        if (event.payload?.runId === runId) {
+          progressBatcher?.push(event.payload.text);
+        }
       },
     );
   }
@@ -1133,7 +1279,11 @@ export async function runUltracode(
       interactive: opts.interactive ?? null,
     });
   } finally {
-    unlisten?.();
+    try {
+      progressBatcher?.flush();
+    } finally {
+      unlisten?.();
+    }
   }
 }
 

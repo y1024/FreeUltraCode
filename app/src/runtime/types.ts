@@ -258,6 +258,8 @@ export interface RunContext {
   personalInstructions?: string;
   /** Same instructions, keyed by adapter/provider/channel/model selection. */
   personalInstructionsByModel?: PersonalInstructionsByModel;
+  /** Host-level instructions that must apply to every model call. */
+  globalInstructions?: string;
   cwd?: string;
   extraWorkspacePaths?: string[];
   permission?: string;

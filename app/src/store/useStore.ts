@@ -88,6 +88,7 @@ import { getCliRuntimeSnapshot } from '@/lib/cliConfig';
 import { maybeRunCcSwitchAutoImportOnFirstRun } from '@/lib/ccSwitchAutoImport';
 import { ensureFreeProxy, isFreeChannelSelection } from '@/lib/freeChannels';
 import { getManifestModeEnabled } from '@/lib/manifestMode';
+import { projectSettingsFromMetadata } from '@/lib/projectSettings';
 import {
   isNotifiableCompletionStatus,
   notifySessionComplete,
@@ -271,6 +272,7 @@ import {
 import {
   HISTORY_SCHEMA_VERSION,
   type SessionMeta,
+  type SessionPatch,
   type SessionRecord,
   type SessionSummary,
   type WorkspaceSummary,
@@ -503,6 +505,7 @@ export interface StoreState {
   newSession: () => void;
   selectSession: (sessionId: string, workspaceId?: string) => void;
   deleteSession: (sessionId: string, workspaceId?: string) => void;
+  deleteWorkspaceHistory: (workspaceId: string) => void;
   renameWorkflowSession: (
     sessionId: string,
     workspaceId: string | null,
@@ -699,6 +702,42 @@ function workspacePathForId(
   return trimmedPath(
     workspaces.find((workspace) => workspace.id === workspaceId)?.path,
   );
+}
+
+function projectMcpGuidanceForState(
+  state: Pick<StoreState, 'workspaces'>,
+  sessionKey: WorkflowSessionKey,
+): string {
+  if (!sessionKey.workspaceId) return '';
+  const workspace = state.workspaces.find(
+    (candidate) => candidate.id === sessionKey.workspaceId,
+  );
+  if (!workspace) return '';
+  const settings = projectSettingsFromMetadata(workspace.metadata);
+  if (settings.mcp.enabled === false) return '';
+  const enabledServers = settings.mcp.servers.filter((server) => server.enabled);
+  if (enabledServers.length === 0) return '';
+
+  const serverLines = enabledServers
+    .map((server) => {
+      const probe = server.lastProbe;
+      const status = probe?.ok
+        ? `已连接${typeof probe.toolsCount === 'number' ? `，${probe.toolsCount} 个工具` : ''}`
+        : probe
+          ? `未连接：${probe.message}`
+          : '已配置，尚未探测';
+      return `- ${server.label}（${server.id}，${status}）`;
+    })
+    .join('\n');
+  const hasUnrealMcp = enabledServers.some((server) =>
+    `${server.id} ${server.label}`.toLowerCase().includes('unreal') ||
+    server.id.toLowerCase().includes('ue-mcp'),
+  );
+  const realtimeRule = hasUnrealMcp
+    ? '当用户问题涉及 Unreal Editor、当前打开场景、Actor、资源、材质、渲染状态、PIE 或编辑器实时状态时，优先使用 Unreal MCP 工具读取编辑器实时状态；命令行、文件搜索和日志作为补充。'
+    : '当用户问题涉及已配置工具能直接读取的运行时状态时，优先使用对应 MCP 工具；命令行、文件搜索和日志作为补充。';
+
+  return `\n\n【全局 MCP】\n当前工作区已启用 MCP server，所有模型请求都应优先使用这些实时工具：\n${serverLines}\n${realtimeRule}\n若 MCP 工具不可用或连接失败，先说明原因，再退回本地文件/日志分析。`;
 }
 
 function composerWorkspaceForSessionKey(
@@ -919,6 +958,19 @@ function composerCliWorkspaceOptions(composer: ComposerSettings): {
     ...(cwd ? { cwd } : {}),
     ...(extraWorkspacePaths.length > 0 ? { extraWorkspacePaths } : {}),
   };
+}
+
+function aiEditCliWorkspaceOptions(
+  ch: Pick<AiEditChannel, 'workspaceRootPath'>,
+  composer: ComposerSettings,
+): {
+  cwd?: string;
+  extraWorkspacePaths?: string[];
+} {
+  const options = composerCliWorkspaceOptions(composer);
+  if (options.cwd) return options;
+  const fallback = ch.workspaceRootPath?.trim();
+  return fallback ? { ...options, cwd: fallback } : options;
 }
 
 function workspaceHistoryWithRecentPaths(
@@ -1718,6 +1770,9 @@ function syncAndPersistSessionRunStatus(
   syncSessionRunStatus(sessionKey, status);
   scheduleSessionRunCompletedNotification(sessionKey, status);
   if (!sessionKey.workspaceId || !sessionKey.sessionId) return;
+  flushAiEditPersistKey(
+    aiEditPersistKey(sessionKey.workspaceId, sessionKey.sessionId),
+  );
   void historyStore
     .updateSession(sessionKey.workspaceId, sessionKey.sessionId, {
       meta: { runStatus: status ?? 'idle' },
@@ -3066,6 +3121,94 @@ async function deleteHistorySession(
   }
 }
 
+function workspaceHasLiveSession(
+  state: Pick<
+    StoreState,
+    'runningSessions' | 'aiEditingSessions' | 'chattingSessions'
+  >,
+  workspaceId: string,
+): boolean {
+  return [
+    ...state.runningSessions,
+    ...state.aiEditingSessions,
+    ...state.chattingSessions,
+  ].some((sessionKey) => sessionKey.workspaceId === workspaceId);
+}
+
+async function deleteHistoryWorkspace(workspaceId: string): Promise<void> {
+  const state = useStore.getState();
+  if (!state.historyReady || !workspaceId) return;
+  if (workspaceHasLiveSession(state, workspaceId)) return;
+
+  await historyStore.deleteWorkspace(workspaceId);
+  const workspaces = await historyStore.listWorkspaces();
+  const sessionTree = await loadSessionTree(workspaces);
+
+  const deletingInitiallyActiveWorkspace = state.activeWorkspaceId === workspaceId;
+  const nextActiveWorkspaceId = deletingInitiallyActiveWorkspace
+    ? workspaces[0]?.id ?? null
+    : null;
+  const nextActiveSessions = nextActiveWorkspaceId
+    ? sessionTree[nextActiveWorkspaceId] ?? []
+    : [];
+  const nextActiveSessionId = nextActiveSessions[0]?.id ?? null;
+  const nextActive =
+    nextActiveWorkspaceId && nextActiveSessionId
+      ? { workspaceId: nextActiveWorkspaceId, sessionId: nextActiveSessionId }
+      : null;
+
+  useStore.setState((s) => {
+    const deletingActiveWorkspace = s.activeWorkspaceId === workspaceId;
+    const activeWorkspaceId = deletingActiveWorkspace
+      ? nextActiveWorkspaceId
+      : s.activeWorkspaceId;
+    const activeSessions = activeWorkspaceId
+      ? sessionTree[activeWorkspaceId] ?? []
+      : [];
+    const activeSessionId = deletingActiveWorkspace
+      ? nextActiveSessionId
+      : s.activeSessionId;
+
+    if (!deletingActiveWorkspace) {
+      return {
+        workspaces,
+        sessionTree,
+        sessions: s.activeWorkspaceId
+          ? sessionTree[s.activeWorkspaceId] ?? s.sessions
+          : s.sessions,
+      };
+    }
+
+    return {
+      workspaces,
+      sessionTree,
+      activeWorkspaceId,
+      activeSessionId,
+      sessions: activeSessions,
+      messages: [],
+      workflow: chatWorkflow(activeSessions[0]?.title, s.locale),
+      selectedNodeId: null,
+      dirty: false,
+      ...emptyRunProgress(),
+      canvasViewport: null,
+      mode: 'design' as const,
+      ...composerDraftPatchForSession(s, {
+        workspaceId: activeWorkspaceId,
+        sessionId: activeSessionId,
+      }),
+    };
+  });
+
+  if (nextActive) {
+    await activateHistorySession(nextActive.sessionId, nextActive.workspaceId);
+  } else if (state.activeWorkspaceId === workspaceId) {
+    await historyStore.patchConfig({
+      lastActiveWorkspaceId: undefined,
+      lastActiveSessionId: undefined,
+    });
+  }
+}
+
 async function renameWorkflowHistorySession(
   sessionId: string,
   workspaceId: string | null,
@@ -4194,6 +4337,10 @@ export const useStore = create<StoreState>((set, get) => ({
     void deleteHistorySession(sessionId, workspaceId);
   },
 
+  deleteWorkspaceHistory: (workspaceId) => {
+    void deleteHistoryWorkspace(workspaceId);
+  },
+
   renameWorkflowSession: (sessionId, workspaceId, name) =>
     renameWorkflowHistorySession(sessionId, workspaceId, name),
 
@@ -4371,7 +4518,7 @@ export const useStore = create<StoreState>((set, get) => ({
         const concurrency = parsed.options.concurrency ?? runConcurrency();
         concurrencyForDisplay = concurrency;
         const result = await runUltracode(request, {
-          ...composerCliWorkspaceOptions(state.composer),
+          ...aiEditCliWorkspaceOptions(ch, state.composer),
           adapter: gatewaySelection?.adapter,
           model:
             gatewaySelection?.modelOverride ||
@@ -4632,8 +4779,10 @@ export const useStore = create<StoreState>((set, get) => ({
     // conversation. The graph stays a single node.
     const directRoute = resolveDirectGatewayRoute(gatewaySelection);
     const inTauri = isTauri();
-    const useApi = !!directRoute;
-    const useCli = !useApi && inTauri;
+    const projectMcpGuidance = projectMcpGuidanceForState(state, aiEditingSession);
+    const preferCliForProjectMcp = inTauri && !!projectMcpGuidance;
+    const useApi = !!directRoute && !preferCliForProjectMcp;
+    const useCli = (!useApi && inTauri) || preferCliForProjectMcp;
 
     const pushAssistant = (txt: string, routeLabel?: string) => {
       const msg: Message = {
@@ -4963,6 +5112,9 @@ ${previousReply.slice(0, 4000)}
           signal: ch.abortController.signal,
           runId,
           usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+          permission: state.composer.permission || 'full',
+          cwd: ch.workspaceRootPath ?? undefined,
+          forceCli: preferCliForProjectMcp,
           onDelta: (chunk) => {
             firstProgressAt ??= Date.now();
             request.onDelta?.(chunk);
@@ -5134,7 +5286,8 @@ ${previousReply.slice(0, 4000)}
       modelStrategyGuidance(state.composer.modelStrategy) +
       languageAdaptationPrompt(state.locale) +
       personalBlock +
-      gameExpertBlock;
+      gameExpertBlock +
+      projectMcpGuidance;
     const clarifyingSystem =
       `${unifiedBase}\n\n${INTERACTION_PROTOCOL}\n` +
       `（交互澄清模式：用户明确要求你先澄清/确认/反问时，才使用上面的交互块提一个关键问题；用户回答后不要继续追问，必须把回答吸收到 workflow 蓝图，并输出中文说明 + \`\`\`json 蓝图。）`;
@@ -5189,6 +5342,7 @@ ${previousReply.slice(0, 4000)}
           model: cli.model,
           cliCommand: cli.cliCommand,
           env: cli.env,
+          ...aiEditCliWorkspaceOptions(ch, state.composer),
         });
       }
       let full = '';
@@ -5227,6 +5381,7 @@ ${previousReply.slice(0, 4000)}
               model: cli.model,
               cliCommand: cli.cliCommand,
               env: cli.env,
+              ...aiEditCliWorkspaceOptions(ch, state.composer),
             },
           );
         }
@@ -5322,6 +5477,7 @@ ${previousReply.slice(0, 4000)}
           model: cli.model,
           cliCommand: cli.cliCommand,
           env: cli.env,
+          ...aiEditCliWorkspaceOptions(ch, state.composer),
         });
       } else if (directRoute) {
         let judgeFull = '';
@@ -5347,8 +5503,13 @@ ${previousReply.slice(0, 4000)}
     // node mirrors the conversation. The graph never grows past one node.
     if (simpleMode) {
       void (async () => {
-        const chatSystem =
-          `${SIMPLE_CHAT_SYSTEM}${languageAdaptationPrompt(state.locale)}${personalBlock}${gameExpertBlock}`;
+        const chatSystem = [
+          SIMPLE_CHAT_SYSTEM,
+          languageAdaptationPrompt(state.locale),
+          personalBlock,
+          gameExpertBlock,
+          useCli ? projectMcpGuidance : '',
+        ].join('');
         // Multi-turn context: the gateway/CLI takes a single string, so fold the
         // prior conversation (text messages only, skipping system notices) into
         // the prompt as a transcript, then the current question. Keeps a bounded
@@ -5408,7 +5569,7 @@ ${previousReply.slice(0, 4000)}
               model: cli.model,
               cliCommand: cli.cliCommand,
               env: cli.env,
-              ...composerCliWorkspaceOptions(state.composer),
+              ...aiEditCliWorkspaceOptions(ch, state.composer),
               sessionId: nativeSession?.sessionId,
               resume: nativeSession ? nativeResume : undefined,
               onProgress: (chunk) => {
@@ -5508,7 +5669,7 @@ ${previousReply.slice(0, 4000)}
                     model: cli.model,
                     cliCommand: cli.cliCommand,
                     env: cli.env,
-                    ...composerCliWorkspaceOptions(state.composer),
+                    ...aiEditCliWorkspaceOptions(ch, state.composer),
                   });
                 }
                 return await completeDirectWithSpeed({ system: researchSystem, userContent: convoR });
@@ -6701,6 +6862,7 @@ function appendPromptToActiveSimpleChat(
   selection: GatewaySelection,
   text: string,
 ): ActiveChatAppendResult {
+  void text;
   const channels = getAiEditChatChannels(
     sessionKey.workspaceId,
     sessionKey.sessionId,
@@ -6716,43 +6878,7 @@ function appendPromptToActiveSimpleChat(
     return 'selection-mismatch';
   }
 
-  const ch = compatible[compatible.length - 1];
-  const userMsg: Message = {
-    id: shortId('m'),
-    role: 'user',
-    text,
-    createdAt: Date.now(),
-  };
-
-  const baseMessages = mergeAiEditChatMessages(ch);
-  ch.ownedMessageIds?.add(userMsg.id);
-  ch.messages = [...baseMessages, userMsg];
-  ch.workflow = simpleWorkflowFromMessages(aiEditBaseWorkflow(ch), ch.messages);
-  rememberAiEditSnapshot(ch);
-
-  if (aiEditViewActive(ch)) {
-    useStore.setState({
-      messages: ch.messages,
-      workflow: ch.workflow,
-    });
-  }
-  updateAiEditSessionSummary(ch);
-  syncSessionRunStatus(
-    { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
-    'running',
-  );
-
-  if (ch.workspaceId && ch.sessionId) {
-    void historyStore
-      .updateSession(ch.workspaceId, ch.sessionId, {
-        messages: ch.messages,
-        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
-        meta: { runStatus: 'running' },
-      })
-      .catch(() => {});
-  }
-
-  return 'appended';
+  return 'none';
 }
 
 function getAiEditSnapshotsForSession(
@@ -6862,6 +6988,7 @@ function removeAiEditChannel(ch: AiEditChannel | null): void {
   const sessionKey = { workspaceId: ch.workspaceId, sessionId: ch.sessionId };
   const rootPath = ch.workspaceRootPath;
   rememberAiEditSnapshot(ch);
+  flushAiEditPersist(ch);
   activeAiEdits.delete(ch.key);
   syncAiEditingSessions();
   refreshSessionChangesForKey(sessionKey, rootPath);
@@ -7085,16 +7212,24 @@ async function refineImagePromptViaModel(
   onProgress: (live: string) => void,
 ): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
   const userContent = `请把下面的图片需求改写成一段高质量的生图提示词：\n\n${userText}`;
+  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+  });
+  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
+  const system = `${IMAGE_PROMPT_SYSTEM}${projectMcpGuidance}`;
   const direct = resolveDirectGatewayRoute(codingSelection);
-  if (direct) {
+  if (direct && !preferCliForProjectMcp) {
     let full = '';
     const text = await completeGatewayText({
       route: direct,
-      system: IMAGE_PROMPT_SYSTEM,
+      system,
       userContent,
       maxTokens: 1024,
       signal: ch.abortController.signal,
       usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+      permission,
+      cwd: ch.workspaceRootPath ?? undefined,
       onDelta: (chunk) => {
         full += chunk;
         onProgress(full);
@@ -7116,13 +7251,14 @@ async function refineImagePromptViaModel(
     try {
       let live = '';
       const text = await aiEditViaCli(
-        `${IMAGE_PROMPT_SYSTEM}\n\n${userContent}`,
+        `${system}\n\n${userContent}`,
         cli.adapter,
         {
           permission,
           model: cli.model,
           cliCommand: cli.cliCommand,
           env: cli.env,
+          cwd: ch.workspaceRootPath ?? undefined,
           runId,
           onProgress: (chunk) => {
             live += chunk;
@@ -7150,16 +7286,24 @@ async function refineMusicPromptViaModel(
   onProgress: (live: string) => void,
 ): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
   const userContent = `请把下面的音乐需求改写成一段高质量的音乐生成提示词：\n\n${userText}`;
+  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+  });
+  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
+  const system = `${MUSIC_PROMPT_SYSTEM}${projectMcpGuidance}`;
   const direct = resolveDirectGatewayRoute(codingSelection);
-  if (direct) {
+  if (direct && !preferCliForProjectMcp) {
     let full = '';
     const text = await completeGatewayText({
       route: direct,
-      system: MUSIC_PROMPT_SYSTEM,
+      system,
       userContent,
       maxTokens: 1024,
       signal: ch.abortController.signal,
       usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+      permission,
+      cwd: ch.workspaceRootPath ?? undefined,
       onDelta: (chunk) => {
         full += chunk;
         onProgress(full);
@@ -7181,13 +7325,14 @@ async function refineMusicPromptViaModel(
     try {
       let live = '';
       const text = await aiEditViaCli(
-        `${MUSIC_PROMPT_SYSTEM}\n\n${userContent}`,
+        `${system}\n\n${userContent}`,
         cli.adapter,
         {
           permission,
           model: cli.model,
           cliCommand: cli.cliCommand,
           env: cli.env,
+          cwd: ch.workspaceRootPath ?? undefined,
           runId,
           onProgress: (chunk) => {
             live += chunk;
@@ -7219,16 +7364,24 @@ ${threeDRiggingPromptGuidance(userText)}
 
 原始需求：
 ${userText}`;
+  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+  });
+  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
+  const system = `${THREE_D_PROMPT_SYSTEM}${projectMcpGuidance}`;
   const direct = resolveDirectGatewayRoute(codingSelection);
-  if (direct) {
+  if (direct && !preferCliForProjectMcp) {
     let full = '';
     const text = await completeGatewayText({
       route: direct,
-      system: THREE_D_PROMPT_SYSTEM,
+      system,
       userContent,
       maxTokens: 1024,
       signal: ch.abortController.signal,
       usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+      permission,
+      cwd: ch.workspaceRootPath ?? undefined,
       onDelta: (chunk) => {
         full += chunk;
         onProgress(full);
@@ -7250,13 +7403,14 @@ ${userText}`;
     try {
       let live = '';
       const text = await aiEditViaCli(
-        `${THREE_D_PROMPT_SYSTEM}\n\n${userContent}`,
+        `${system}\n\n${userContent}`,
         cli.adapter,
         {
           permission,
           model: cli.model,
           cliCommand: cli.cliCommand,
           env: cli.env,
+          cwd: ch.workspaceRootPath ?? undefined,
           runId,
           onProgress: (chunk) => {
             live += chunk;
@@ -7953,6 +8107,71 @@ function rememberAiEditSnapshot(ch: AiEditChannel): void {
   aiEditSnapshots.set(ch.key, cloneAiEditSnapshot(ch));
 }
 
+const AI_EDIT_PERSIST_DEBOUNCE_MS = 750;
+
+interface PendingAiEditPersist {
+  workspaceId: string;
+  sessionId: string;
+  patch: SessionPatch;
+}
+
+const pendingAiEditPersists = new Map<string, PendingAiEditPersist>();
+const aiEditPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function aiEditPersistKey(workspaceId: string, sessionId: string): string {
+  return `${workspaceId}::${sessionId}`;
+}
+
+function flushAiEditPersistKey(key: string): void {
+  const timer = aiEditPersistTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    aiEditPersistTimers.delete(key);
+  }
+  const pending = pendingAiEditPersists.get(key);
+  if (!pending) return;
+  pendingAiEditPersists.delete(key);
+  void historyStore
+    .updateSession(pending.workspaceId, pending.sessionId, pending.patch)
+    .catch(() => {});
+}
+
+function flushAiEditPersist(ch: AiEditChannel | null): void {
+  if (!ch?.workspaceId || !ch.sessionId) return;
+  flushAiEditPersistKey(aiEditPersistKey(ch.workspaceId, ch.sessionId));
+}
+
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  (timer as { unref?: () => void }).unref?.();
+}
+
+function scheduleAiEditPersist(
+  ch: AiEditChannel,
+  patch: SessionPatch,
+  delayMs = AI_EDIT_PERSIST_DEBOUNCE_MS,
+): void {
+  if (!ch.workspaceId || !ch.sessionId) return;
+  const key = aiEditPersistKey(ch.workspaceId, ch.sessionId);
+  const prev = pendingAiEditPersists.get(key);
+  pendingAiEditPersists.set(key, {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+    patch: {
+      ...(prev?.patch ?? {}),
+      ...patch,
+      meta: {
+        ...(prev?.patch.meta ?? {}),
+        ...(patch.meta ?? {}),
+      },
+    },
+  });
+  const timer = aiEditPersistTimers.get(key);
+  if (timer) clearTimeout(timer);
+  const nextTimer = setTimeout(() => flushAiEditPersistKey(key), delayMs);
+  unrefTimer(nextTimer);
+  aiEditPersistTimers.set(key, nextTimer);
+}
+
 function aiEditOwnedMessages(ch: AiEditChannel): Message[] {
   if (!ch.chat || !ch.ownedMessageIds) return ch.messages;
   return ch.messages.filter((message) => ch.ownedMessageIds?.has(message.id));
@@ -8051,23 +8270,18 @@ function updateAiEditSessionSummary(ch: AiEditChannel): void {
   });
 }
 
-function persistAiEditMessages(ch: AiEditChannel): void {
+function persistAiEditMessages(ch: AiEditChannel, messages: Message[]): void {
   if (!ch.workspaceId || !ch.sessionId) return;
-  const { workspaceId, sessionId, messages } = ch;
-  void historyStore
-    .updateSession(workspaceId, sessionId, { messages })
-    .catch(() => {});
+  scheduleAiEditPersist(ch, { messages });
 }
 
-function persistAiEditWorkflow(ch: AiEditChannel): void {
+function persistAiEditWorkflow(ch: AiEditChannel, messages: Message[]): void {
   if (!ch.workspaceId || !ch.sessionId) return;
-  const { workspaceId, sessionId, messages, workflow } = ch;
+  const { workflow } = ch;
   const patch = ch.workflowSession
     ? { messages, workflow, meta: emptyRunMeta() }
     : { messages, meta: emptyRunMeta() };
-  void historyStore
-    .updateSession(workspaceId, sessionId, patch)
-    .catch(() => {});
+  scheduleAiEditPersist(ch, patch);
 }
 
 function aiEditCommitMessages(ch: AiEditChannel | null, persist: boolean): void {
@@ -8079,7 +8293,7 @@ function aiEditCommitMessages(ch: AiEditChannel | null, persist: boolean): void 
   }
   if (persist) {
     updateAiEditSessionSummary(ch);
-    persistAiEditMessages(ch);
+    persistAiEditMessages(ch, messages);
   }
 }
 
@@ -8102,7 +8316,7 @@ function aiEditCommitWorkflow(ch: AiEditChannel | null, persist: boolean): void 
       { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
       undefined,
     );
-    persistAiEditWorkflow(ch);
+    persistAiEditWorkflow(ch, messages);
   }
 }
 
@@ -8669,8 +8883,15 @@ async function invokeAgentCli(
  * identical to the pre-refactor inline implementation.
  */
 function buildGuiGateway(ch: RunChannel): RunGateway {
+  const state = useStore.getState();
+  const projectMcpGuidance = projectMcpGuidanceForState(state, {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+  });
+  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
   return {
     resolveDirectRoute: (selection) => {
+      if (preferCliForProjectMcp) return null;
       const direct = resolveDirectGatewayRoute(selection);
       return direct ? { adapter: direct.adapter, model: direct.model } : null;
     },
@@ -8695,6 +8916,9 @@ function buildGuiGateway(ch: RunChannel): RunGateway {
         userContent: prompt,
         maxTokens: 8192,
         usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+        permission: ch.config.permission,
+        cwd: ch.config.cwd,
+        forceCli: preferCliForProjectMcp,
         onDelta,
       });
       return { text, adapter: direct.adapter };
@@ -8905,11 +9129,16 @@ function buildGuiCallbacks(
  * injected.
  */
 function buildGuiRunContext(ch: RunChannel, workflow: IRGraph): RuntimeRunContext {
-  const { personalInstructions, personalInstructionsByModel } = useStore.getState();
+  const state = useStore.getState();
+  const { personalInstructions, personalInstructionsByModel } = state;
   return {
     selection: runGlobalGatewaySelection(ch, workflow),
     personalInstructions,
     personalInstructionsByModel,
+    globalInstructions: projectMcpGuidanceForState(state, {
+      workspaceId: ch.workspaceId,
+      sessionId: ch.sessionId,
+    }),
     cwd: ch.config.cwd,
     extraWorkspacePaths: ch.config.extraWorkspacePaths,
     permission: ch.config.permission,

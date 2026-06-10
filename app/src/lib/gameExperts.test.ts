@@ -5,6 +5,7 @@ import {
   GAME_EXPERTS,
   buildGameExpertPrompt,
   gameExpertMenuEntries,
+  gameExpertSlashCommand,
   getGameExpertCatalog,
   normalizeGameExpertSettings,
   parseGameExpertCommand,
@@ -388,5 +389,55 @@ describe('gameExpertMenuEntries round-trip', () => {
       enabled: false,
     });
     expect(gameExpertMenuEntries(off, 'zh-CN')).toEqual([]);
+  });
+});
+
+describe('gameExpertSlashCommand', () => {
+  const settings = normalizeGameExpertSettings({
+    ...DEFAULT_GAME_EXPERT_SETTINGS,
+    enabled: true,
+  });
+
+  it('gives every built-in expert a stable single-token command that pins it', () => {
+    for (const expert of GAME_EXPERTS) {
+      const command = gameExpertSlashCommand(expert);
+      // Single token: no whitespace, so the command parser never truncates it.
+      expect(command).toBe(`/${expert.id}`);
+      expect(command).not.toMatch(/\s/);
+      const cmd = parseGameExpertCommand(`${command} 优化一下`, settings);
+      expect(cmd, `${command} should resolve`).not.toBeNull();
+      expect(cmd?.expertIds).toEqual([expert.id]);
+      expect(cmd?.task).toBe('优化一下');
+    }
+  });
+
+  it('resolves the command even for experts toggled off in settings', () => {
+    const off = normalizeGameExpertSettings({
+      ...DEFAULT_GAME_EXPERT_SETTINGS,
+      enabled: true,
+      enabledExpertIds: [],
+    });
+    const command = gameExpertSlashCommand(GAME_EXPERTS[0]);
+    const cmd = parseGameExpertCommand(`${command} 任务`, off);
+    expect(cmd?.expertIds).toEqual([GAME_EXPERTS[0].id]);
+  });
+});
+
+describe('per-expert menu entries pin a single expert', () => {
+  it('each expert entry round-trips to exactly that expert', () => {
+    const settings = normalizeGameExpertSettings({
+      ...DEFAULT_GAME_EXPERT_SETTINGS,
+      enabled: true,
+    });
+    const entries = gameExpertMenuEntries(settings, 'zh-CN');
+    const expertEntries = entries.filter((entry) =>
+      entry.id.startsWith('game-expert:expert:'),
+    );
+    expect(expertEntries.length).toBe(GAME_EXPERTS.length);
+    for (const entry of expertEntries) {
+      const expectedId = entry.id.slice('game-expert:expert:'.length);
+      const cmd = parseGameExpertCommand(`${entry.insertText}做点东西`, settings);
+      expect(cmd?.expertIds, `entry ${entry.name}`).toEqual([expectedId]);
+    }
   });
 });

@@ -65,6 +65,22 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
         totalEntries: relativePath ? 0 : 1,
       }),
     ),
+    listWorkspaceVcsStatus: vi.fn(async (rootPath: string) => ({
+      rootPath,
+      generatedAtMs: 1,
+      source: 'git',
+      files: [],
+      truncated: false,
+      scanScope: 'full',
+    })),
+    listWorkspaceVcsStatusShallow: vi.fn(async (rootPath: string) => ({
+      rootPath,
+      generatedAtMs: 1,
+      source: 'git',
+      files: [],
+      truncated: false,
+      scanScope: 'root',
+    })),
     slashCatalog: async () => ({
       scannedAtMs: 1,
       ready: true,

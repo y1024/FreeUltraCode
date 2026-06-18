@@ -5,6 +5,10 @@ import AIDock from './AIDock';
 import { defaultBlueprint } from '@/core/defaultBlueprint';
 import { defaultComposer, samplePromptGroups } from '@/store/sampleSessions';
 import { useStore } from '@/store/useStore';
+import {
+  blueprintModeInstall,
+  blueprintModeStatus,
+} from '@/lib/tauri';
 
 const slashCatalogMock = vi.hoisted(() => ({
   entries: [
@@ -107,6 +111,9 @@ const slashCatalogMock = vi.hoisted(() => ({
   ],
 }));
 
+const blueprintModeStatusMock = vi.hoisted(() => vi.fn());
+const blueprintModeInstallMock = vi.hoisted(() => vi.fn());
+
 vi.mock('@/lib/tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/tauri')>();
   return {
@@ -117,6 +124,8 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
       ready: true,
       entries: slashCatalogMock.entries,
     }),
+    blueprintModeStatus: blueprintModeStatusMock,
+    blueprintModeInstall: blueprintModeInstallMock,
     onSlashCatalogUpdated: async () => () => {},
   };
 });
@@ -125,6 +134,28 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   true;
 
 function resetStore(adapter: 'claude-code' | 'codex' | 'gemini' = 'claude-code'): void {
+  vi.mocked(blueprintModeStatus).mockResolvedValue({
+    ok: true,
+    sourceUrl: 'https://example.test/BlueprintMode.zip',
+    targetDir: 'E:\\Game\\Demo\\Plugins\\BlueprintMode',
+    exists: true,
+    installed: true,
+    upluginPath: 'E:\\Game\\Demo\\Plugins\\BlueprintMode\\BlueprintMode.uplugin',
+    versionName: 'test',
+    notes: ['已检测到 BlueprintMode 插件。'],
+    warnings: [],
+    error: null,
+  });
+  vi.mocked(blueprintModeInstall).mockResolvedValue({
+    ok: true,
+    sourceUrl: 'https://example.test/BlueprintMode.zip',
+    targetDir: 'E:\\Game\\Demo\\Plugins\\BlueprintMode',
+    filesCopied: 3,
+    replacedExisting: false,
+    notes: ['已安装 BlueprintMode 插件。'],
+    warnings: [],
+    error: null,
+  });
   const workflow = defaultBlueprint('Slash suggestions');
   useStore.setState({
     mode: 'design',
@@ -207,6 +238,13 @@ function typeTextarea(input: HTMLTextAreaElement, value: string): void {
 function flushAnimationFrame(): Promise<void> {
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => resolve());
+  });
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
   });
 }
 
@@ -799,7 +837,11 @@ describe('AIDock slash suggestions', () => {
     resetStore();
     const generateBlueprintPrompt = vi.fn();
     const sendPrompt = vi.fn(() => true);
-    useStore.setState({ generateBlueprintPrompt, sendPrompt });
+    useStore.setState({
+      composer: { ...defaultComposer, workspace: 'E:\\Game\\Demo' },
+      generateBlueprintPrompt,
+      sendPrompt,
+    });
     const view = await renderDock();
 
     const submitEnter = (input: HTMLTextAreaElement) =>
@@ -818,6 +860,7 @@ describe('AIDock slash suggestions', () => {
         typeTextarea(input, '/blueprint-mode-start --target BP_Player --context full');
         submitEnter(input);
       });
+      await flushAsyncWork();
       expect(useStore.getState().composer.blueprintMode).toBe(true);
       expect(useStore.getState().composer.blueprintModeStartedAt).toBeGreaterThan(0);
       expect(useStore.getState().composer.blueprintModeArgs).toBe(
@@ -871,7 +914,11 @@ describe('AIDock slash suggestions', () => {
     resetStore();
     const generateBlueprintPrompt = vi.fn();
     const sendPrompt = vi.fn(() => true);
-    useStore.setState({ generateBlueprintPrompt, sendPrompt });
+    useStore.setState({
+      composer: { ...defaultComposer, workspace: 'E:\\Game\\Demo' },
+      generateBlueprintPrompt,
+      sendPrompt,
+    });
     const view = await renderDock();
 
     try {
@@ -890,6 +937,7 @@ describe('AIDock slash suggestions', () => {
           }),
         );
       });
+      await flushAsyncWork();
 
       expect(useStore.getState().composer.blueprintMode).toBe(true);
       expect(useStore.getState().composer.blueprintModeArgs).toBe(
@@ -898,6 +946,76 @@ describe('AIDock slash suggestions', () => {
       expect(generateBlueprintPrompt).toHaveBeenCalledWith('添加按 E 开门逻辑');
       expect(sendPrompt).not.toHaveBeenCalled();
       expect(input.value).toBe('');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('asks to install BlueprintMode before entering UE Blueprint mode', async () => {
+    resetStore();
+    vi.mocked(blueprintModeStatus).mockResolvedValue({
+      ok: true,
+      sourceUrl: 'https://example.test/BlueprintMode.zip',
+      targetDir: 'E:\\Game\\Demo\\Plugins\\BlueprintMode',
+      exists: false,
+      installed: false,
+      upluginPath: null,
+      versionName: null,
+      notes: ['尚未安装 BlueprintMode 插件。'],
+      warnings: [],
+      error: null,
+    });
+    useStore.setState({
+      composer: {
+        ...defaultComposer,
+        workspace: 'E:\\Game\\Demo',
+      },
+    });
+    const generateBlueprintPrompt = vi.fn();
+    const sendPrompt = vi.fn(() => true);
+    useStore.setState({ generateBlueprintPrompt, sendPrompt });
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(
+          input,
+          '/blueprint-mode-start --target BP_Door 添加按 E 开门逻辑',
+        );
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            ctrlKey: true,
+            bubbles: true,
+          }),
+        );
+      });
+      await flushAsyncWork();
+
+      expect(useStore.getState().composer.blueprintMode).toBe(false);
+      expect(view.container.textContent).toContain(
+        '当前 UE 项目未安装 BlueprintMode 插件',
+      );
+      const installButton = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button'),
+      ).find((button) => button.textContent?.trim() === '安装 BlueprintMode 插件');
+      expect(installButton).toBeTruthy();
+
+      await act(async () => {
+        installButton?.click();
+      });
+      await flushAsyncWork();
+
+      expect(blueprintModeInstall).toHaveBeenCalledWith({
+        rootPath: 'E:\\Game\\Demo',
+        targetDir: null,
+        overwrite: false,
+      });
+      expect(useStore.getState().composer.blueprintMode).toBe(true);
+      expect(useStore.getState().composer.blueprintModeArgs).toBe('--target BP_Door');
+      expect(generateBlueprintPrompt).toHaveBeenCalledWith('添加按 E 开门逻辑');
     } finally {
       await view.cleanup();
     }

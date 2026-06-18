@@ -1237,6 +1237,24 @@ export interface BlueprintModeInstallRequest {
   overwrite?: boolean;
 }
 
+export interface BlueprintModeTargetRequest {
+  rootPath: string;
+  targetDir?: string | null;
+}
+
+export interface BlueprintModeStatusResult {
+  ok: boolean;
+  sourceUrl: string;
+  targetDir: string;
+  exists: boolean;
+  installed: boolean;
+  upluginPath: string | null;
+  versionName: string | null;
+  notes: string[];
+  warnings: string[];
+  error: string | null;
+}
+
 export interface BlueprintModeInstallResult {
   ok: boolean;
   sourceUrl: string;
@@ -1246,6 +1264,25 @@ export interface BlueprintModeInstallResult {
   notes: string[];
   warnings: string[];
   error: string | null;
+}
+
+export interface BlueprintModeUninstallResult {
+  ok: boolean;
+  targetDir: string;
+  removed: boolean;
+  notes: string[];
+  warnings: string[];
+  error: string | null;
+}
+
+export async function blueprintModeStatus(
+  request: BlueprintModeTargetRequest,
+): Promise<BlueprintModeStatusResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<BlueprintModeStatusResult>('blueprint_mode_status', { request });
 }
 
 /**
@@ -1260,6 +1297,16 @@ export async function blueprintModeInstall(
   }
   const invoke = await getInvoke();
   return invoke<BlueprintModeInstallResult>('blueprint_mode_install', { request });
+}
+
+export async function blueprintModeUninstall(
+  request: BlueprintModeTargetRequest,
+): Promise<BlueprintModeUninstallResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<BlueprintModeUninstallResult>('blueprint_mode_uninstall', { request });
 }
 
 export async function godotMcpSetupProject(
@@ -2050,6 +2097,49 @@ export async function openLocalPath(
     return true;
   } catch {
     return false;
+  }
+}
+
+export interface EngineRevealResult {
+  ok: boolean;
+  /** unreal | unity | godot | cocos | unknown */
+  engine: string;
+  /** jumped | not_asset | engine_unreachable | unsupported | error */
+  status: string;
+  message: string;
+}
+
+/**
+ * Try to reveal a file inside its running game editor. Today only Unreal is
+ * wired to a real local channel (RemoteControl HTTP); Unity/Godot/Cocos return
+ * an `unsupported` status the UI surfaces as a hint. Resolves with a clear
+ * result object (never throws) so the caller can show an inline message.
+ */
+export async function engineRevealAsset(
+  rootPath: string,
+  filePath: string,
+): Promise<EngineRevealResult> {
+  if (!tauriAvailable()) {
+    return {
+      ok: false,
+      engine: 'unknown',
+      status: 'error',
+      message: '当前浏览器模式不能在引擎中定位文件。请使用桌面端。',
+    };
+  }
+  try {
+    const invoke = await getInvoke();
+    return (await invoke('engine_reveal_asset', {
+      rootPath,
+      filePath,
+    })) as EngineRevealResult;
+  } catch (err) {
+    return {
+      ok: false,
+      engine: 'unknown',
+      status: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

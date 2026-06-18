@@ -127,6 +127,8 @@ import {
   COCOS_MCP_SERVER_ID,
   GODOT_MCP_SERVER_ID,
   blueprintModeInstall,
+  blueprintModeStatus,
+  blueprintModeUninstall,
   listWorkspaceDirectory,
   cocosMcpSetupProject,
   godotMcpSetupProject,
@@ -154,6 +156,8 @@ import {
   type ProjectMcpProbeResult,
   type GenericProjectMcpSetupResult,
   type BlueprintModeInstallResult,
+  type BlueprintModeStatusResult,
+  type BlueprintModeUninstallResult,
   type SkillInstallTarget,
   type SlashCatalogEntry,
   type UnityMcpSetupResult,
@@ -3232,13 +3236,19 @@ export default function ProjectSettingsModal({
   const [ueSetupStep, setUeSetupStep] = useState<string | null>(null);
   const [ueSetupResult, setUeSetupResult] = useState<UeMcpSetupResult | null>(null);
   const [ueSetupError, setUeSetupError] = useState<string | null>(null);
-  const [blueprintInstallBusy, setBlueprintInstallBusy] = useState(false);
+  const [blueprintAction, setBlueprintAction] = useState<
+    'install' | 'update' | 'uninstall' | null
+  >(null);
+  const [blueprintStatusBusy, setBlueprintStatusBusy] = useState(false);
+  const [blueprintStatus, setBlueprintStatus] =
+    useState<BlueprintModeStatusResult | null>(null);
   const [blueprintInstallResult, setBlueprintInstallResult] =
     useState<BlueprintModeInstallResult | null>(null);
+  const [blueprintUninstallResult, setBlueprintUninstallResult] =
+    useState<BlueprintModeUninstallResult | null>(null);
   const [blueprintInstallError, setBlueprintInstallError] = useState<string | null>(
     null,
   );
-  const [blueprintInstallOverwrite, setBlueprintInstallOverwrite] = useState(false);
   const [godotSetupBusy, setGodotSetupBusy] = useState(false);
   const [godotSetupStep, setGodotSetupStep] = useState<string | null>(null);
   const [godotSetupResult, setGodotSetupResult] =
@@ -4607,7 +4617,35 @@ export default function ProjectSettingsModal({
     }
   }, [persistSettings, settings, workspacePath, locale]);
 
-  const installBlueprintModePlugin = useCallback(async () => {
+  const refreshBlueprintModeStatus = useCallback(async () => {
+    if (!tauriAvailable() || !workspacePath.trim()) {
+      setBlueprintStatus(null);
+      return;
+    }
+    setBlueprintStatusBusy(true);
+    setBlueprintInstallError(null);
+    try {
+      const result = await blueprintModeStatus({
+        rootPath: workspacePath,
+        targetDir: null,
+      });
+      setBlueprintStatus(result);
+      if (!result.ok && result.error) {
+        setBlueprintInstallError(result.error);
+      }
+    } catch (err) {
+      setBlueprintInstallError(describeError(err));
+    } finally {
+      setBlueprintStatusBusy(false);
+    }
+  }, [workspacePath]);
+
+  useEffect(() => {
+    if (tab !== 'blueprint') return;
+    void refreshBlueprintModeStatus();
+  }, [refreshBlueprintModeStatus, tab]);
+
+  const installBlueprintModePlugin = useCallback(async (mode: 'install' | 'update') => {
     if (!tauriAvailable()) {
       setBlueprintInstallError(tr('一键安装需要在桌面应用中运行。', locale));
       return;
@@ -4616,15 +4654,16 @@ export default function ProjectSettingsModal({
       setBlueprintInstallError(tr('未指定工作区路径。', locale));
       return;
     }
-    setBlueprintInstallBusy(true);
+    setBlueprintAction(mode);
     setBlueprintInstallError(null);
     setBlueprintInstallResult(null);
+    setBlueprintUninstallResult(null);
     setStatus(null);
     try {
       const result = await blueprintModeInstall({
         rootPath: workspacePath,
         targetDir: null,
-        overwrite: blueprintInstallOverwrite,
+        overwrite: mode === 'update',
       });
       setBlueprintInstallResult(result);
       if (!result.ok) {
@@ -4636,21 +4675,72 @@ export default function ProjectSettingsModal({
         );
         return;
       }
+      await refreshBlueprintModeStatus();
       setStatus(
         locale === 'zh-CN'
-          ? 'BlueprintMode 插件已安装；重启 Unreal Editor 后生效。'
-          : 'BlueprintMode plugin installed; restart Unreal Editor to load it.',
+          ? mode === 'update'
+            ? 'BlueprintMode 插件已更新；重启 Unreal Editor 后生效。'
+            : 'BlueprintMode 插件已安装；重启 Unreal Editor 后生效。'
+          : mode === 'update'
+            ? 'BlueprintMode plugin updated; restart Unreal Editor to load it.'
+            : 'BlueprintMode plugin installed; restart Unreal Editor to load it.',
       );
     } catch (err) {
       setBlueprintInstallError(describeError(err));
     } finally {
-      setBlueprintInstallBusy(false);
+      setBlueprintAction(null);
     }
   }, [
-    blueprintInstallOverwrite,
     locale,
+    refreshBlueprintModeStatus,
     workspacePath,
   ]);
+
+  const uninstallBlueprintModePlugin = useCallback(async () => {
+    if (!tauriAvailable()) {
+      setBlueprintInstallError(tr('一键安装需要在桌面应用中运行。', locale));
+      return;
+    }
+    if (!workspacePath.trim()) {
+      setBlueprintInstallError(tr('未指定工作区路径。', locale));
+      return;
+    }
+    setBlueprintAction('uninstall');
+    setBlueprintInstallError(null);
+    setBlueprintInstallResult(null);
+    setBlueprintUninstallResult(null);
+    setStatus(null);
+    try {
+      const result = await blueprintModeUninstall({
+        rootPath: workspacePath,
+        targetDir: null,
+      });
+      setBlueprintUninstallResult(result);
+      if (!result.ok) {
+        setBlueprintInstallError(
+          result.error ||
+            (locale === 'zh-CN'
+              ? 'BlueprintMode 插件卸载失败。'
+              : 'BlueprintMode plugin uninstall failed.'),
+        );
+        return;
+      }
+      await refreshBlueprintModeStatus();
+      setStatus(
+        result.removed
+          ? locale === 'zh-CN'
+            ? 'BlueprintMode 插件已卸载。'
+            : 'BlueprintMode plugin uninstalled.'
+          : locale === 'zh-CN'
+            ? 'BlueprintMode 插件未安装。'
+            : 'BlueprintMode plugin is not installed.',
+      );
+    } catch (err) {
+      setBlueprintInstallError(describeError(err));
+    } finally {
+      setBlueprintAction(null);
+    }
+  }, [locale, refreshBlueprintModeStatus, workspacePath]);
 
   const setupGodotMcp = useCallback(async () => {
     if (!tauriAvailable()) {
@@ -5404,6 +5494,40 @@ export default function ProjectSettingsModal({
       const ueMcpConnected =
         settings.mcp.enabled && ueMcpServer?.enabled && ueMcpServer.lastProbe?.ok;
       const ueMcpConfigured = Boolean(ueMcpServer);
+      const blueprintInstalled =
+        blueprintStatus?.installed ?? blueprintInstallResult?.ok ?? false;
+      const blueprintTargetExists =
+        blueprintStatus?.exists ?? blueprintInstallResult?.ok ?? false;
+      const blueprintUninstallBusy = blueprintAction === 'uninstall';
+      const blueprintAnyBusy = blueprintStatusBusy || blueprintAction !== null;
+      const blueprintStatusText = blueprintStatusBusy
+        ? tr('检测中...', locale)
+        : blueprintInstalled
+          ? tr('已安装', locale)
+          : blueprintTargetExists
+            ? locale === 'zh-CN'
+              ? '目录异常'
+              : 'Directory issue'
+            : locale === 'zh-CN'
+              ? '待安装'
+              : 'Needs install';
+      const blueprintReportTarget =
+        blueprintStatus?.targetDir ||
+        blueprintInstallResult?.targetDir ||
+        blueprintUninstallResult?.targetDir ||
+        '';
+      const blueprintReportSource =
+        blueprintStatus?.sourceUrl || blueprintInstallResult?.sourceUrl || '';
+      const blueprintReportNotes = [
+        ...(blueprintStatus?.notes ?? []),
+        ...(blueprintInstallResult?.notes ?? []),
+        ...(blueprintUninstallResult?.notes ?? []),
+      ];
+      const blueprintReportWarnings = [
+        ...(blueprintStatus?.warnings ?? []),
+        ...(blueprintInstallResult?.warnings ?? []),
+        ...(blueprintUninstallResult?.warnings ?? []),
+      ];
 
       return (
         <div className="grid gap-4">
@@ -5448,12 +5572,13 @@ export default function ProjectSettingsModal({
               <div className="rounded border border-border-soft bg-bg-alt p-3">
                 <div className="text-[11px] text-fg-faint">BlueprintMode</div>
                 <div className="mt-1 text-sm font-semibold text-fg">
-                  {blueprintInstallResult?.ok
-                    ? tr('已安装', locale)
-                    : locale === 'zh-CN'
-                      ? '待安装'
-                      : 'Needs install'}
+                  {blueprintStatusText}
                 </div>
+                {blueprintStatus?.versionName ? (
+                  <div className="mt-1 truncate text-[11px] text-fg-faint">
+                    v{blueprintStatus.versionName}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -5463,31 +5588,79 @@ export default function ProjectSettingsModal({
                 : 'The plugin is downloaded from GitHub and installed under the project Plugins directory.'}
             </div>
 
-            <ToggleRow
-              label={locale === 'zh-CN' ? '覆盖已有插件目录' : 'Overwrite existing plugin'}
-              hint={
-                locale === 'zh-CN'
-                  ? '目标目录已存在时才需要开启。'
-                  : 'Enable only when the target directory already exists.'
-              }
-              checked={blueprintInstallOverwrite}
-              onChange={setBlueprintInstallOverwrite}
-            />
-
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => void installBlueprintModePlugin()}
-                disabled={!desktop || blueprintInstallBusy}
-                className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent/15 px-3 py-1.5 text-xs font-semibold text-fg hover:bg-accent/25 disabled:border-border disabled:bg-bg-alt disabled:text-fg-faint"
+                onClick={() => void refreshBlueprintModeStatus()}
+                disabled={!desktop || blueprintAnyBusy}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg disabled:opacity-50"
               >
-                <Download size={13} />
-                {blueprintInstallBusy
-                  ? tr('安装中...', locale)
-                  : locale === 'zh-CN'
-                    ? '安装 BlueprintMode'
-                    : 'Install BlueprintMode'}
+                <RefreshCw
+                  size={13}
+                  className={blueprintStatusBusy ? 'animate-spin' : undefined}
+                />
+                {tr('重新检测', locale)}
               </button>
+              {blueprintTargetExists ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void installBlueprintModePlugin('update')}
+                    disabled={!desktop || blueprintAnyBusy}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent/15 px-3 py-1.5 text-xs font-semibold text-fg hover:bg-accent/25 disabled:border-border disabled:bg-bg-alt disabled:text-fg-faint"
+                  >
+                    {blueprintAction === 'update' ? (
+                      <RefreshCw size={13} className="animate-spin" />
+                    ) : (
+                      <Download size={13} />
+                    )}
+                    {blueprintAction === 'update'
+                      ? locale === 'zh-CN'
+                        ? '更新中...'
+                        : 'Updating...'
+                      : locale === 'zh-CN'
+                        ? '更新 BlueprintMode'
+                        : 'Update BlueprintMode'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void uninstallBlueprintModePlugin()}
+                    disabled={!desktop || blueprintAnyBusy}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-red-400 hover:text-red-200 disabled:opacity-50"
+                  >
+                    {blueprintUninstallBusy ? (
+                      <RefreshCw size={13} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={13} />
+                    )}
+                    {blueprintUninstallBusy
+                      ? locale === 'zh-CN'
+                        ? '卸载中...'
+                        : 'Uninstalling...'
+                      : locale === 'zh-CN'
+                        ? '卸载 BlueprintMode'
+                        : 'Uninstall BlueprintMode'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void installBlueprintModePlugin('install')}
+                  disabled={!desktop || blueprintAnyBusy}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent/15 px-3 py-1.5 text-xs font-semibold text-fg hover:bg-accent/25 disabled:border-border disabled:bg-bg-alt disabled:text-fg-faint"
+                >
+                  {blueprintAction === 'install' ? (
+                    <RefreshCw size={13} className="animate-spin" />
+                  ) : (
+                    <Download size={13} />
+                  )}
+                  {blueprintAction === 'install'
+                    ? tr('安装中...', locale)
+                    : locale === 'zh-CN'
+                      ? '安装 BlueprintMode'
+                      : 'Install BlueprintMode'}
+                </button>
+              )}
             </div>
 
             {!desktop ? (
@@ -5500,21 +5673,27 @@ export default function ProjectSettingsModal({
                 {blueprintInstallError}
               </div>
             ) : null}
-            {blueprintInstallResult ? (
+            {blueprintStatus || blueprintInstallResult || blueprintUninstallResult ? (
               <div className="grid gap-1 rounded-md border border-border-soft bg-bg-alt px-3 py-2 text-[11px] leading-relaxed text-fg-faint">
                 <div>
                   {locale === 'zh-CN' ? '来源：' : 'Source: '}
-                  {blueprintInstallResult.sourceUrl || tr('未指定', locale)}
+                  {blueprintReportSource || tr('未指定', locale)}
                 </div>
                 <div>
                   {locale === 'zh-CN' ? '目标：' : 'Target: '}
-                  {blueprintInstallResult.targetDir || tr('未指定', locale)}
+                  {blueprintReportTarget || tr('未指定', locale)}
                 </div>
-                {blueprintInstallResult.notes.map((note) => (
-                  <div key={note}>{note}</div>
+                {blueprintStatus?.upluginPath ? (
+                  <div>
+                    {locale === 'zh-CN' ? '插件：' : 'Plugin: '}
+                    {blueprintStatus.upluginPath}
+                  </div>
+                ) : null}
+                {blueprintReportNotes.map((note, index) => (
+                  <div key={`${index}:${note}`}>{note}</div>
                 ))}
-                {blueprintInstallResult.warnings.map((warning) => (
-                  <div key={warning} className="text-amber-200">
+                {blueprintReportWarnings.map((warning, index) => (
+                  <div key={`${index}:${warning}`} className="text-amber-200">
                     {warning}
                   </div>
                 ))}

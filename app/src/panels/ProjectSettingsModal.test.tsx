@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ProjectSettingsModal from './ProjectSettingsModal';
 import { DEFAULT_GAME_EXPERT_SETTINGS } from '@/lib/gameExperts';
 import {
+  blueprintModeInstall,
+  blueprintModeStatus,
+  blueprintModeUninstall,
   installSkillFromUrl,
   openExternal,
   probeProjectLspServer,
@@ -31,6 +34,9 @@ vi.mock('@/lib/tauri', async () => {
     installSkillFromText: vi.fn(),
     installSkillFromUrl: vi.fn(),
     uninstallSkill: vi.fn(),
+    blueprintModeStatus: vi.fn(),
+    blueprintModeInstall: vi.fn(),
+    blueprintModeUninstall: vi.fn(),
     tauriAvailable: vi.fn(() => false),
     scanProjectEnvironment: vi.fn(),
     unityMcpSetupProject: vi.fn(),
@@ -278,6 +284,88 @@ describe('ProjectSettingsModal game project tabs', () => {
       expect(tabText).not.toContain('MCP');
       expect(tabText).not.toContain('LSP');
       expect(tabText).not.toContain('Skills');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('detects installed BlueprintMode and exposes update/uninstall actions', async () => {
+    vi.mocked(blueprintModeStatus).mockResolvedValue({
+      ok: true,
+      sourceUrl: 'https://github.com/wellingfeng/ue-blueprint-mode',
+      targetDir: `${workspace.path}\\Plugins\\BlueprintMode`,
+      exists: true,
+      installed: true,
+      upluginPath: `${workspace.path}\\Plugins\\BlueprintMode\\BlueprintMode.uplugin`,
+      versionName: '0.1.0',
+      notes: ['已检测到 BlueprintMode 插件。'],
+      warnings: [],
+      error: null,
+    });
+    vi.mocked(blueprintModeInstall).mockResolvedValue({
+      ok: true,
+      sourceUrl: 'https://github.com/wellingfeng/ue-blueprint-mode',
+      targetDir: `${workspace.path}\\Plugins\\BlueprintMode`,
+      filesCopied: 3,
+      replacedExisting: true,
+      notes: ['已从 GitHub 下载并安装 3 个文件。'],
+      warnings: [],
+      error: null,
+    });
+    vi.mocked(blueprintModeUninstall).mockResolvedValue({
+      ok: true,
+      targetDir: `${workspace.path}\\Plugins\\BlueprintMode`,
+      removed: true,
+      notes: ['已卸载 BlueprintMode 插件。'],
+      warnings: [],
+      error: null,
+    });
+
+    const view = await renderProjectSettingsModal();
+
+    try {
+      vi.mocked(tauriAvailable).mockReturnValue(true);
+      const blueprintTab = Array.from(
+        view.container.querySelectorAll('nav [role="tab"]'),
+      ).find((tab) => tab.textContent?.trim() === '蓝图');
+
+      await act(async () => {
+        (blueprintTab as HTMLButtonElement).click();
+      });
+      await settle();
+
+      expect(blueprintModeStatus).toHaveBeenCalledWith({
+        rootPath: workspace.path,
+        targetDir: null,
+      });
+      expect(view.container.textContent).toContain('已安装');
+      expect(view.container.textContent).toContain('更新 BlueprintMode');
+      expect(view.container.textContent).toContain('卸载 BlueprintMode');
+
+      const updateButton = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button'),
+      ).find((button) => button.textContent?.trim() === '更新 BlueprintMode');
+      await act(async () => {
+        updateButton?.click();
+      });
+      await settle();
+      expect(blueprintModeInstall).toHaveBeenCalledWith({
+        rootPath: workspace.path,
+        targetDir: null,
+        overwrite: true,
+      });
+
+      const uninstallButton = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button'),
+      ).find((button) => button.textContent?.trim() === '卸载 BlueprintMode');
+      await act(async () => {
+        uninstallButton?.click();
+      });
+      await settle();
+      expect(blueprintModeUninstall).toHaveBeenCalledWith({
+        rootPath: workspace.path,
+        targetDir: null,
+      });
     } finally {
       await view.cleanup();
     }

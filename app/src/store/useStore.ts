@@ -682,7 +682,11 @@ export interface StoreState {
   appendChatNote: (
     text: string,
     role?: 'user' | 'assistant' | 'system',
-    options?: { localOnly?: boolean },
+    options?: {
+      appAction?: Message['appAction'];
+      interaction?: InteractionRequest;
+      localOnly?: boolean;
+    },
   ) => string;
   /** Delete one message from the active conversation and persist the transcript. */
   deleteMessage: (messageId: string) => void;
@@ -5321,6 +5325,13 @@ export const useStore = create<StoreState>((set, get) => ({
       role,
       text,
       createdAt: Date.now(),
+      ...(options?.interaction
+        ? {
+            interaction: options.interaction,
+            interactionStatus: 'pending' as const,
+          }
+        : {}),
+      ...(options?.appAction ? { appAction: options.appAction } : {}),
       ...(options?.localOnly ? { localOnly: true } : {}),
     };
     set((state) => ({ messages: [...state.messages, msg] }));
@@ -6407,10 +6418,19 @@ ${previousReply.slice(0, 4000)}
               try {
                 answer = await callNativeCli(promptBody, nativeSession, nativeResume);
               } catch (err) {
+                // Two recoverable native-session failures share one cure: drop the
+                // bad id, mint a fresh one, and re-send the transcript as cold
+                // context.
+                //   - "No conversation found …" — the resume target vanished
+                //     (only meaningful when we were resuming).
+                //   - "Session ID … is already in use" — the id is registered AND
+                //     locked from a prior turn that never exited cleanly; this can
+                //     hit the FIRST turn too (a create collision), so it is not
+                //     gated on nativeResume.
                 if (
                   nativeSession &&
-                  nativeResume &&
-                  isMissingClaudeConversationError(err)
+                  ((nativeResume && isMissingClaudeConversationError(err)) ||
+                    isSessionAlreadyInUseError(err))
                 ) {
                   forgetChatNativeSession(nativeSession);
                   nativeSession = chatNativeSessionFor(ch, cli);
@@ -7781,6 +7801,19 @@ function isMissingClaudeConversationError(err: unknown): boolean {
   return /No conversation found with session ID/i.test(message);
 }
 
+/**
+ * Claude rejects a launch with "Session ID … is already in use" when the
+ * `--session-id` (create) or `--resume` target is already registered AND locked
+ * on disk — usually because a prior turn for this chat registered the id but its
+ * process never exited cleanly (timeout / cancel / relay outage), so the lock is
+ * still held. Recovery: drop the stuck id and mint a fresh one, re-sending the
+ * transcript as cold context (mirrors the missing-conversation fallback).
+ */
+function isSessionAlreadyInUseError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  return /session ID .* is already in use/i.test(message);
+}
+
 function runKey(workspaceId: string | null, sessionId: string | null): string {
   return workflowSessionKeyId({ workspaceId, sessionId });
 }
@@ -8101,6 +8134,18 @@ const VIDEO_PROMPT_SYSTEM = `你是专业的"视频生成提示词工程师"。�
 - 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
 - 只描述要生成什么视频，不要写"请生成/帮我拍"之类的指令性措辞。`;
 
+const SPEECH_PROMPT_SYSTEM = `你是专业的"配音文案撰稿人"。你的输出会被原样交给文字转语音(TTS)模型逐字朗读，所以你写出的就是要被念出来的最终台词本身，而不是对它的描述或指令。
+请先判断用户输入属于哪一类：
+- 「内容创作需求」：用户描述想要的内容（例如"讲一个催眠故事""来一段产品介绍""写一句欢迎语""读一首关于秋天的诗"），此时你要真正创作出可朗读的正文，而不是复述这句需求。
+- 「逐字朗读需求」：用户直接给出了要朗读的文字（例如"朗读以下文字：……"或贴了一整段文案），此时基本保留原文，只做必要的清理（去掉"请朗读""帮我读一下"这类指令性措辞和多余引号），不要改写或扩写其内容。
+通用要求：
+- 只输出要被朗读的正文，不要任何解释、前后缀、标题、引号、括注、代码块或"（停顿）""旁白："之类的舞台提示。
+- 文案要自然口语、适合朗读，标点节奏得当；不要出现 URL、表情符号、Markdown 符号或难以发音的特殊字符。
+- 与用户输入语言保持一致（中文需求输出中文文案，英文需求输出英文文案）。
+- 若用户提到时长（如"15秒""一分钟"），按中文每分钟约 220-260 字、英文每分钟约 130-150 词的语速，控制正文长度大致匹配该时长。
+- 保留用户明确指定的措辞、称呼、品牌名和数字；用户没提到的细节由你做合理且贴合语气的补充。
+- 不要写"请生成/帮我读/以下是"之类的指令性或交代性措辞，直接给出正文。`;
+
 const SPRITE_PROMPT_SYSTEM = `你是专业的"Sprite 动画提示词工程师"。用户会给出一句关于想要生成的 sprite、spritesheet、像素角色、技能特效或动作帧的描述，你要把它扩写成一段高质量、可直接喂给 sprite 动画生成模型的提示词。
 要求：
 - 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
@@ -8377,6 +8422,18 @@ function cleanGeneratedSpritePrompt(raw: string): string {
   return text;
 }
 
+function cleanGeneratedSpeechText(raw: string): string {
+  let text = raw.trim();
+  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
+  if (fence) text = fence[1].trim();
+  text = text
+    .replace(/^(?:配音文案|朗读文案|台词|文案|正文|text|script)\s*[:：]\s*/iu, '')
+    .trim();
+  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
+  if (quoted) text = quoted[1].trim();
+  return text;
+}
+
 /**
  * Step 1 of the fixed two-step image flow: send the user's description to the
  * selected coding/text model and have it author a high-quality image-generation
@@ -8522,6 +8579,80 @@ async function refineMusicPromptViaModel(
       );
       return {
         prompt: cleanGeneratedMusicPrompt(text || live),
+        routeLine: gatewayRouteLine(cli),
+        routeHeader: gatewayRouteHeader(cli),
+      };
+    } finally {
+      ch.cliRunIds.delete(runId);
+    }
+  }
+  return null;
+}
+
+async function refineSpeechPromptViaModel(
+  ch: AiEditChannel,
+  userText: string,
+  codingSelection: GatewaySelection,
+  permission: string,
+  onProgress: (live: string) => void,
+): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
+  const userContent = `请把下面的语音需求转写成最终要被朗读的配音文案。如果用户是在描述想要的内容（如"讲一个故事""来段介绍"），就真正创作出可朗读的正文；如果用户直接给了要朗读的文字，就基本保留原文只做清理：\n\n${userText}`;
+  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+  });
+  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
+  const system = `${SPEECH_PROMPT_SYSTEM}${projectMcpGuidance}`;
+  const direct = resolveDirectGatewayRoute(codingSelection);
+  if (direct && !preferCliForProjectMcp) {
+    let full = '';
+    const text = await completeGatewayText({
+      route: direct,
+      system,
+      userContent,
+      maxTokens: 2048,
+      signal: ch.abortController.signal,
+      usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+      permission,
+      cwd: ch.workspaceRootPath ?? undefined,
+      onDelta: (chunk) => {
+        full += chunk;
+        onProgress(full);
+      },
+    });
+    return {
+      prompt: cleanGeneratedSpeechText(full || text),
+      routeLine: gatewayRouteLine(direct),
+      routeHeader: gatewayRouteHeader(direct),
+    };
+  }
+  if (isTauri()) {
+    if (isFreeChannelSelection(codingSelection)) {
+      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
+    }
+    const cli = await resolveCliGatewayRoute(codingSelection);
+    const runId = makeCliRunId();
+    ch.cliRunIds.add(runId);
+    try {
+      let live = '';
+      const text = await aiEditViaCli(
+        `${system}\n\n${userContent}`,
+        cli.adapter,
+        {
+          permission,
+          model: cli.model,
+          cliCommand: cli.cliCommand,
+          env: cli.env,
+          cwd: ch.workspaceRootPath ?? undefined,
+          runId,
+          onProgress: (chunk) => {
+            live += chunk;
+            onProgress(live);
+          },
+        },
+      );
+      return {
+        prompt: cleanGeneratedSpeechText(text || live),
         routeLine: gatewayRouteLine(cli),
         routeHeader: gatewayRouteHeader(cli),
       };
@@ -9631,6 +9762,11 @@ function startSpeechGenerationTurn(
   const settings = loadSpeechGenerationSettings();
   if (!settings.enabled) return;
   const providerId = options.providerId ?? preferredReadySpeechProviderId(settings);
+  const codingSelection = workflowDefaultGatewaySelection(
+    state.workflow,
+    state.composer.model,
+  );
+  const codingPermission = state.composer.permission || 'full';
 
   if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
 
@@ -9658,7 +9794,7 @@ function startSpeechGenerationTurn(
     role: 'assistant',
     text: `⚙ 文本转语音：${providerLabel}${model ? ` · 模型：${model}` : ''}${
       voice ? ` · 音色：${voice}` : ''
-    }\n① 正在合成语音…`,
+    }\n① 正在让模型撰写配音文案…`,
     routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
     createdAt: now + 1,
   };
@@ -9724,27 +9860,68 @@ function startSpeechGenerationTurn(
       `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
         Date.now() - startedAt,
       )}`;
-    let pendingAssetId: string | null = registerPendingGeneratedAsset({
-      kind: 'speech',
-      origin: provider?.local ? 'local' : 'remote',
-      provider: providerLabel,
-      model,
-      prompt: generationPrompt,
-      sessionId: ch.sessionId,
-      workspaceId: ch.workspaceId,
-      messageId: assistantId,
-      titlePrefix: 'speech',
-    });
+    let pendingAssetId: string | null = null;
     try {
+      let speechText = generationPrompt;
+      let refineHeader = '';
+      let refineNote = '';
+      try {
+        const refined = await refineSpeechPromptViaModel(
+          ch,
+          generationPrompt,
+          codingSelection,
+          codingPermission,
+          (live) => {
+            if (!aiEditRegistered(ch)) return;
+            setAssistant(
+              `${elapsed()}\n① 撰写配音文案中…\n\n${live.trim() || '⟳ 生成中…'}`,
+              false,
+            );
+          },
+        );
+        if (refined && refined.prompt) {
+          speechText = refined.prompt;
+          refineHeader = refined.routeHeader;
+        } else {
+          // No text-model backend was reachable (no direct API key and no
+          // usable CLI). Surface this so the user knows the spoken text is
+          // their raw input rather than model-authored copy.
+          speechText = generationPrompt;
+          refineNote =
+            '⚠ 未能调用文本模型撰写配音文案，已直接朗读原始输入。请在设置中为编码/文本渠道配置可用的 API Key 或 CLI。\n';
+        }
+      } catch (err) {
+        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
+        // The refine step failed. Fall back to reading the raw input, but tell
+        // the user the copywriting step errored instead of silently pretending
+        // it succeeded.
+        speechText = generationPrompt;
+        const reason = err instanceof Error ? err.message : String(err);
+        refineNote = `⚠ 撰写配音文案失败（${reason}），已直接朗读原始输入。\n`;
+      }
+      if (!aiEditRegistered(ch)) return;
+      const promptModelLine =
+        refineNote || (refineHeader ? `✎ 文案模型：${refineHeader}\n` : '');
+      pendingAssetId = registerPendingGeneratedAsset({
+        kind: 'speech',
+        origin: provider?.local ? 'local' : 'remote',
+        provider: providerLabel,
+        model,
+        prompt: speechText,
+        sessionId: ch.sessionId,
+        workspaceId: ch.workspaceId,
+        messageId: assistantId,
+        titlePrefix: 'speech',
+      });
       setAssistant(
-        `${elapsed()}\n② 正在调用${
+        `${elapsed()}\n${promptModelLine}② 已生成配音文案，正在调用${
           provider?.local ? '本地语音模型' : '语音 API'
-        }合成…\n\n文本：${generationPrompt}`,
+        }合成…\n\n文本：${speechText}`,
         false,
       );
       const result = await generateSpeech(
         {
-          prompt: generationPrompt,
+          prompt: speechText,
           providerId: options.providerId,
           model: options.model,
           voice: options.voice,
@@ -9752,7 +9929,7 @@ function startSpeechGenerationTurn(
         },
         settings,
       );
-      setAssistant(`${elapsed()}\n${speechResultMarkdown(result)}`, true);
+      setAssistant(`${elapsed()}\n${promptModelLine}${speechResultMarkdown(result)}`, true);
       const capturePendingAssetId = pendingAssetId;
       pendingAssetId = null;
       void captureGeneratedAssets({

@@ -16,6 +16,14 @@ import type {
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+export type MessageAppAction =
+  | {
+      type: 'blueprint-mode-install';
+      rootPath: string;
+      modeArgs?: string | null;
+      prompt?: string;
+    };
+
 /** Per-node execution status while a workflow is running. */
 export type NodeRunState = IRRunStatus;
 
@@ -65,6 +73,8 @@ export interface Message {
   interactionAnswer?: InteractionAnswer;
   /** Widget lifecycle; gates rendering (pending = active, else read-only). */
   interactionStatus?: InteractionStatus;
+  /** App-owned interactive actions rendered through the same AI return widget. */
+  appAction?: MessageAppAction;
   /**
    * Present on the assistant message of a live `/ultracode` run: a structured
    * snapshot of run progress (agent count, elapsed, per-node status) decoded

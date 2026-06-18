@@ -53,6 +53,7 @@ import {
 import { cn } from '@/lib/cn';
 import type { GatewaySelection } from '@/core/ir';
 import {
+  ensureRequiredPersonalInstructions,
   personalInstructionsForSelection,
   personalInstructionsKey,
   personalInstructionsSample,
@@ -1215,7 +1216,15 @@ function PersonalizationSettings({
                 setDraft(entry.key, '');
                 setPersonalInstructions('', entry.selection);
               }}
-              onSave={() => setPersonalInstructions(draft, entry.selection)}
+              onSave={() => {
+                // Persist, then sync the draft to the normalized value the store
+                // actually stored (trimmed + required larkdoc section appended).
+                // Otherwise the draft keeps differing from the saved value and
+                // the button never flips to "已保存", making it look like the
+                // save did not stick.
+                setPersonalInstructions(draft, entry.selection);
+                setDraft(entry.key, ensureRequiredPersonalInstructions(draft));
+              }}
             />
           );
         })}

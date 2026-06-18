@@ -157,6 +157,8 @@ import {
 import { shouldRefocusComposerAfterAppend } from '@/lib/composerEntryPolicy';
 import {
   tauriAvailable,
+  blueprintModeInstall,
+  blueprintModeStatus,
   localModelStatus,
   listWorkspaceDirectory,
   onSlashCatalogUpdated,
@@ -1384,6 +1386,77 @@ function splitInteractionOption(option: string): { title: string; detail: string
   return { title: option.trim(), detail: '' };
 }
 
+const BLUEPRINT_MODE_INSTALL_PROMPT =
+  '当前 UE 项目未安装 BlueprintMode 插件。是否现在安装？';
+const BLUEPRINT_MODE_INSTALL_LABEL = '安装 BlueprintMode 插件';
+
+interface BlueprintModeStartPayload {
+  modeArgs: string | null;
+  prompt: string;
+}
+
+function tokenizeCommandPayload(
+  raw: string,
+): Array<{ value: string; start: number; end: number }> {
+  const tokens: Array<{ value: string; start: number; end: number }> = [];
+  const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|[^\s]+/g;
+  for (const match of raw.matchAll(re)) {
+    const value = match[1] ?? match[2] ?? match[0];
+    tokens.push({
+      value,
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+    });
+  }
+  return tokens;
+}
+
+function blueprintFlagExpectsValue(flag: string): boolean {
+  if (flag.includes('=')) return false;
+  return new Set([
+    '--target',
+    '--context',
+    '--parent',
+    '--class',
+    '--asset',
+    '--path',
+    '--folder',
+    '--name',
+    '--package',
+    '--project',
+    '--map',
+    '--level',
+  ]).has(flag.toLowerCase());
+}
+
+function parseBlueprintModeStartPayload(rawPayload: string): BlueprintModeStartPayload {
+  const raw = rawPayload.trim();
+  if (!raw) return { modeArgs: null, prompt: '' };
+
+  const tokens = tokenizeCommandPayload(raw);
+  let index = 0;
+  let argsEnd = 0;
+  let promptStart = raw.length;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (!token.value.startsWith('-')) {
+      promptStart = token.start;
+      break;
+    }
+    argsEnd = token.end;
+    index += 1;
+    if (blueprintFlagExpectsValue(token.value) && index < tokens.length) {
+      argsEnd = tokens[index].end;
+      index += 1;
+    }
+  }
+
+  const modeArgs = raw.slice(0, argsEnd).trim() || null;
+  const prompt = raw.slice(promptStart).trim();
+  return { modeArgs, prompt };
+}
+
 /**
  * Renders a node's interaction request (select / input / confirm) inside the
  * AI-return stream. States:
@@ -1705,6 +1778,7 @@ export default function AIDock({
   const generateSpritePrompt = useStore((s) => s.generateSpritePrompt);
   const generateComfyPrompt = useStore((s) => s.generateComfyPrompt);
   const generateUiPrompt = useStore((s) => s.generateUiPrompt);
+  const generateBlueprintPrompt = useStore((s) => s.generateBlueprintPrompt);
   const searchMeshLibraryPrompt = useStore((s) => s.searchMeshLibraryPrompt);
   const runUltracodePrompt = useStore((s) => s.runUltracodePrompt);
   const appendChatNote = useStore((s) => s.appendChatNote);
@@ -2966,6 +3040,187 @@ export default function AIDock({
     () => fileMentionRootFolders.map(workspacePathKey).join('|'),
     [fileMentionRootFolders],
   );
+  const enterBlueprintMode = useCallback((
+    modeArgs: string | null | undefined,
+    prompt: string | undefined,
+  ) => {
+    const currentComposer = useStore.getState().composer;
+    const wasBlueprintMode = currentComposer.blueprintMode;
+    const startedAt = wasBlueprintMode
+      ? currentComposer.blueprintModeStartedAt ?? Date.now()
+      : Date.now();
+    setComposer({
+      imageMode: false,
+      imageModeStartedAt: null,
+      musicMode: false,
+      musicModeStartedAt: null,
+      threeDMode: false,
+      threeDModeStartedAt: null,
+      comfyMode: false,
+      comfyModeStartedAt: null,
+      videoMode: false,
+      videoModeStartedAt: null,
+      spriteMode: false,
+      spriteModeStartedAt: null,
+      speechMode: false,
+      speechModeStartedAt: null,
+      uiMode: false,
+      uiModeStartedAt: null,
+      blueprintMode: true,
+      blueprintModeStartedAt: startedAt,
+      blueprintModeArgs: modeArgs?.trim() || null,
+    });
+    if (!wasBlueprintMode) {
+      appendChatNote(
+        locale === 'zh-CN'
+          ? '🧩 已进入 UE 蓝图模式 · 之后每条消息会按 Unreal Blueprint 创建、修改、编译和校验处理，发送 /blueprint-mode-end 退出'
+          : '🧩 UE Blueprint mode on · every message now targets Unreal Blueprint creation, editing, compilation, and verification; send /blueprint-mode-end to exit',
+        'system',
+      );
+    }
+    const firstPrompt = prompt?.trim();
+    if (firstPrompt) generateBlueprintPrompt(firstPrompt);
+  }, [appendChatNote, generateBlueprintPrompt, locale, setComposer]);
+
+  const requestBlueprintModeInstall = useCallback((
+    rootPath: string,
+    modeArgs: string | null,
+    prompt: string,
+  ) => {
+    appendChatNote(BLUEPRINT_MODE_INSTALL_PROMPT, 'assistant', {
+      interaction: {
+        type: 'confirm',
+        prompt: BLUEPRINT_MODE_INSTALL_PROMPT,
+        confirmLabel: BLUEPRINT_MODE_INSTALL_LABEL,
+        cancelLabel: t(locale, 'common.cancel'),
+      },
+      appAction: {
+        type: 'blueprint-mode-install',
+        rootPath,
+        modeArgs,
+        prompt,
+      },
+    });
+  }, [appendChatNote, locale]);
+
+  const startBlueprintModeFromCommand = useCallback(async (payload: string) => {
+    const { modeArgs, prompt } = parseBlueprintModeStartPayload(payload);
+    const rootPath = (workspaceCwd || activeWorkspacePath).trim();
+    if (!rootPath) {
+      appendChatNote(
+        locale === 'zh-CN'
+          ? '⚠️ 先选择 Unreal Engine 项目目录，才能检查或安装 BlueprintMode 插件。'
+          : '⚠️ Select an Unreal Engine project folder before checking or installing BlueprintMode.',
+      );
+      return;
+    }
+    if (!tauriAvailable()) {
+      appendChatNote(
+        locale === 'zh-CN'
+          ? '⚠️ BlueprintMode 插件检查和安装需要在桌面应用中运行。'
+          : '⚠️ BlueprintMode plugin checks and installation require the desktop app.',
+      );
+      return;
+    }
+    try {
+      const status = await blueprintModeStatus({ rootPath, targetDir: null });
+      if (!status.ok) {
+        appendChatNote(
+          status.error ||
+            (locale === 'zh-CN'
+              ? '⚠️ 当前工作区无法启用 BlueprintMode。'
+              : '⚠️ BlueprintMode cannot be enabled for this workspace.'),
+        );
+        return;
+      }
+      if (status.installed) {
+        enterBlueprintMode(modeArgs, prompt);
+        return;
+      }
+      requestBlueprintModeInstall(rootPath, modeArgs, prompt);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendChatNote(
+        locale === 'zh-CN'
+          ? `⚠️ 检查 BlueprintMode 插件失败：${msg}`
+          : `⚠️ Failed to check BlueprintMode plugin: ${msg}`,
+      );
+    }
+  }, [
+    activeWorkspacePath,
+    appendChatNote,
+    enterBlueprintMode,
+    locale,
+    requestBlueprintModeInstall,
+    workspaceCwd,
+  ]);
+  const handleInteractionAnswer = useCallback((
+    message: Message,
+    answer: InteractionAnswer,
+  ) => {
+    answerInteraction(message.id, answer);
+    const action = message.appAction;
+    if (action?.type !== 'blueprint-mode-install') return;
+    if (answer.kind !== 'confirm' || !answer.confirmed) {
+      appendChatNote(
+        locale === 'zh-CN'
+          ? '已取消安装 BlueprintMode，未进入 UE 蓝图模式。'
+          : 'BlueprintMode installation cancelled; UE Blueprint mode was not enabled.',
+        'system',
+      );
+      return;
+    }
+    void (async () => {
+      appendChatNote(
+        locale === 'zh-CN'
+          ? '正在安装 BlueprintMode 插件…'
+          : 'Installing BlueprintMode plugin...',
+        'system',
+      );
+      try {
+        const result = await blueprintModeInstall({
+          rootPath: action.rootPath,
+          targetDir: null,
+          overwrite: false,
+        });
+        if (!result.ok) {
+          appendChatNote(
+            result.error ||
+              (locale === 'zh-CN'
+                ? 'BlueprintMode 插件安装失败。'
+                : 'BlueprintMode plugin installation failed.'),
+          );
+          return;
+        }
+        appendChatNote(
+          locale === 'zh-CN'
+            ? '✅ BlueprintMode 插件已安装；若 Unreal Editor 已打开，请重启后生效。'
+            : '✅ BlueprintMode plugin installed; restart Unreal Editor if it is already open.',
+          'system',
+        );
+        enterBlueprintMode(action.modeArgs, action.prompt);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendChatNote(
+          locale === 'zh-CN'
+            ? `BlueprintMode 插件安装失败：${msg}`
+            : `BlueprintMode plugin installation failed: ${msg}`,
+        );
+      }
+    })();
+  }, [answerInteraction, appendChatNote, enterBlueprintMode, locale]);
+
+  const handleInteractionDismiss = useCallback((message: Message) => {
+    dismissInteraction(message.id);
+    if (message.appAction?.type === 'blueprint-mode-install') {
+      appendChatNote(
+        locale === 'zh-CN'
+          ? '已取消安装 BlueprintMode，未进入 UE 蓝图模式。'
+          : 'BlueprintMode installation cancelled; UE Blueprint mode was not enabled.',
+        'system',
+      );
+    }
+  }, [appendChatNote, dismissInteraction, locale]);
   useEffect(() => {
     if (!fileMentionTrigger || isReadOnly) return;
 
@@ -4651,6 +4906,31 @@ export default function AIDock({
       }
       return;
     }
+    const blueprintModeStart = /^\/blueprint-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    if (blueprintModeStart) {
+      clearDraftIfNeeded();
+      void startBlueprintModeFromCommand((blueprintModeStart[1] ?? '').trim());
+      return;
+    }
+    const blueprintModeEnd = /^\/blueprint-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
+    if (blueprintModeEnd) {
+      const wasBlueprintMode = composer.blueprintMode;
+      setComposer({
+        blueprintMode: false,
+        blueprintModeStartedAt: null,
+        blueprintModeArgs: null,
+      });
+      clearDraftIfNeeded();
+      if (wasBlueprintMode) {
+        appendChatNote(
+          locale === 'zh-CN'
+            ? '↩ 已退出 UE 蓝图模式 · 已切回 AI 编程渠道与模型'
+            : '↩ UE Blueprint mode off · switched back to the AI coding channel and model',
+          'system',
+        );
+      }
+      return;
+    }
     const threeDMatch = /^\/(?:3d|3d-model|model3d|three-d|三维|3d模型|生成3d)(?:\s+([\s\S]*))?$/iu.exec(text);
     if (threeDMatch) {
       const prompt = (threeDMatch[1] ?? '').trim();
@@ -4739,6 +5019,11 @@ export default function AIDock({
     }
     if (composer.uiMode && !text.startsWith('/')) {
       generateUiPrompt(text);
+      clearDraftIfNeeded();
+      return;
+    }
+    if (composer.blueprintMode && !text.startsWith('/')) {
+      generateBlueprintPrompt(text);
       clearDraftIfNeeded();
       return;
     }
@@ -4861,7 +5146,6 @@ export default function AIDock({
       <button
         type="button"
         onClick={() => void handleCopyConversation()}
-        disabled={messages.length === 0}
         title={t(locale, 'dock.copyConversation')}
         className={headerActionButtonClass}
       >
@@ -4871,7 +5155,6 @@ export default function AIDock({
       <button
         type="button"
         onClick={() => void handleExportConversation()}
-        disabled={messages.length === 0}
         title={t(locale, 'dock.exportConversation')}
         className={headerActionButtonClass}
       >
@@ -5166,8 +5449,12 @@ export default function AIDock({
           (centerInput ? 'shrink-0' : 'flex-1')
         }
       >
-        {!centerInput && (
-        <header className="fuc-ai-return-header relative flex flex-wrap items-center gap-2 border-b border-border-soft px-3 py-2">
+        <header
+          className={
+            'fuc-ai-return-header flex flex-wrap items-center gap-2 border-b border-border-soft px-3 py-2 ' +
+            (centerInput ? 'absolute left-0 right-0 top-0 z-20 bg-bg/95' : 'relative')
+          }
+        >
           {isChat && searchToggleButton}
           {isChat ? (
             chatTitleEditing ? (
@@ -5311,7 +5598,6 @@ export default function AIDock({
             </div>
           )}
         </header>
-        )}
         <div className={'relative min-h-0 ' + (centerInput ? '' : 'flex-1')}>
           {captureStatus && (
             <div
@@ -5444,12 +5730,13 @@ export default function AIDock({
                           locale={locale}
                           active={
                             (m.interactionStatus ?? 'pending') === 'pending' &&
-                            (mode === 'running' ||
+                            (!!m.appAction ||
+                              mode === 'running' ||
                               activeAiEditing ||
                               activeChatting)
                           }
-                          onAnswer={(answer) => answerInteraction(m.id, answer)}
-                          onDismiss={() => dismissInteraction(m.id)}
+                          onAnswer={(answer) => handleInteractionAnswer(m, answer)}
+                          onDismiss={() => handleInteractionDismiss(m)}
                         />
                       ) : normalizedSearch ? (
                         // While a return search is active we fall back to the
@@ -5995,7 +6282,9 @@ export default function AIDock({
                           ? t(locale, 'dock.speechModePlaceholder')
                           : composer.uiMode
                             ? t(locale, 'dock.uiModePlaceholder')
-                            : t(locale, 'dock.placeholder')
+                            : composer.blueprintMode
+                              ? t(locale, 'dock.blueprintModePlaceholder')
+                              : t(locale, 'dock.placeholder')
             }
             aria-expanded={slashOpen || fileMentionOpen}
             aria-controls={

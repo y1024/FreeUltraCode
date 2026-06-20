@@ -95,7 +95,10 @@ import { getCliRuntimeSnapshot } from '@/lib/cliConfig';
 import { maybeRunCcSwitchAutoImportOnFirstRun } from '@/lib/ccSwitchAutoImport';
 import { ensureFreeProxy, isFreeChannelSelection } from '@/lib/freeChannels';
 import { getManifestModeEnabled } from '@/lib/manifestMode';
-import { projectSettingsFromMetadata } from '@/lib/projectSettings';
+import {
+  projectEngineLabel,
+  projectSettingsFromMetadata,
+} from '@/lib/projectSettings';
 import {
   isNotifiableCompletionStatus,
   notifySessionComplete,
@@ -134,6 +137,18 @@ import {
   type ThreeDProviderId,
 } from '@/lib/threeDGeneration';
 import { stripComfyCommand, fetchComfyObjectInfo, comfyBaseUrl } from '@/lib/comfyui';
+import {
+  generateWorldModel,
+  loadWorldModelGenerationSettings,
+  preferredReadyWorldModelProviderId,
+  serializeWorldModelSpec,
+  stripWorldModelCommand,
+  worldModelProviderById,
+  worldModelProviderModel,
+  worldModelProviderReady,
+  worldModelProviders,
+  type WorldModelProviderId,
+} from '@/lib/worldModel';
 import {
   loadUiDesignChannelSettings,
   uiDesignChannelById,
@@ -385,7 +400,12 @@ export type WorkflowSessionKey = {
   sessionId: string | null;
 };
 
-export type BlockedSendTip = 'model-switched-while-chatting';
+export type BlockedSendTip =
+  | 'model-switched-while-chatting'
+  | {
+      kind: 'slash-command-unavailable';
+      message: string;
+    };
 
 /**
  * CONTRACT: the single zustand store. App.tsx and panels rely on this exact
@@ -653,6 +673,14 @@ export interface StoreState {
    */
   generateComfyPrompt: (text: string) => void;
   /**
+   * World-model mode turn: ask the selected coding model to author an
+   * interactive playable-world definition and emit it as a ```worldmodel fenced
+   * block, which the chat stream renders as an embedded, expandable, playable
+   * world preview. Wired to /worldmodel-mode-start and sticky worldMode in
+   * AIDock.
+   */
+  generateWorldPrompt: (text: string) => void;
+  /**
    * UI mode turn: ask the selected coding model to design a game UI deliverable
    * for the project's default UI channel (Project Settings > UI 渠道). Front-loads
    * a UI-design instruction so the model produces interface specs/assets instead
@@ -666,6 +694,11 @@ export interface StoreState {
    * when available, never OpenWorkflows workflow IRGraph.
    */
   generateBlueprintPrompt: (text: string) => void;
+  /**
+   * MetaHuman MVP mode turn: route the request through the selected coding
+   * model as a staged, user-confirmed local Unreal Engine MetaHuman pipeline.
+   */
+  generateMetaHumanPrompt: (text: string) => void;
   /**
    * Search the enabled online 3D model libraries (Project Settings > 在线模型库) for
    * the given query and render thumbnails / previews / downloads into the active
@@ -897,6 +930,31 @@ function projectMcpGuidanceForState(
     : '当用户问题涉及已配置工具能直接读取的运行时状态时，优先使用对应 MCP 工具；命令行、文件搜索和日志作为补充。';
 
   return `\n\n【全局 MCP】\n当前工作区已启用 MCP server，所有模型请求都应优先使用这些实时工具：\n${serverLines}\n${realtimeRule}\n若 MCP 工具不可用或连接失败，先说明原因，再退回本地文件/日志分析。`;
+}
+
+function projectEngineGuidanceForState(
+  state: Pick<StoreState, 'workspaces'>,
+  sessionKey: WorkflowSessionKey,
+): string {
+  if (!sessionKey.workspaceId) return '';
+  const workspace = state.workspaces.find(
+    (candidate) => candidate.id === sessionKey.workspaceId,
+  );
+  if (!workspace) return '';
+  const settings = projectSettingsFromMetadata(workspace.metadata);
+  const configuredEngine =
+    settings.engine !== 'auto' && settings.engine !== 'unknown'
+      ? projectEngineLabel(settings.engine)
+      : null;
+  const workspacePath = workspace.path?.trim();
+  const pathLine = workspacePath ? `\n工作区路径：${workspacePath}` : '';
+  const engineLine = configuredEngine
+    ? `当前项目引擎：${configuredEngine}（来自项目设置/自动检测结果）。`
+    : '当前项目引擎：未识别或自动模式。';
+  const rule = configuredEngine
+    ? `涉及游戏开发、图像转游戏、素材落地、代码/蓝图/组件拆解时，优先按 ${configuredEngine} 项目实现；除非用户明确要求，不要改用 Godot 或其它引擎。`
+    : '涉及游戏开发、图像转游戏、素材落地、代码/蓝图/组件拆解时，必须根据工作区文件标记和上下文自动判读具体引擎（例如 .uproject=Unreal，Packages/manifest.json+ProjectSettings=Unity，project.godot=Godot，project.json/assets=Cocos），不要默认使用 Godot。';
+  return `\n\n【项目引擎】\n${engineLine}${pathLine}\n${rule}`;
 }
 
 function composerWorkspaceForSessionKey(
@@ -1225,9 +1283,15 @@ function normalizeComposerSettings(value: Partial<ComposerSettings> | undefined)
     comfyMode: source.comfyMode ?? defaultComposer.comfyMode,
     comfyModeStartedAt:
       source.comfyModeStartedAt ?? defaultComposer.comfyModeStartedAt,
+    worldMode: source.worldMode ?? defaultComposer.worldMode,
+    worldModeStartedAt:
+      source.worldModeStartedAt ?? defaultComposer.worldModeStartedAt,
     uiMode: source.uiMode ?? defaultComposer.uiMode,
     uiModeStartedAt:
       source.uiModeStartedAt ?? defaultComposer.uiModeStartedAt,
+    metahumanMode: source.metahumanMode ?? defaultComposer.metahumanMode,
+    metahumanModeStartedAt:
+      source.metahumanModeStartedAt ?? defaultComposer.metahumanModeStartedAt,
     blueprintMode: source.blueprintMode ?? defaultComposer.blueprintMode,
     blueprintModeStartedAt:
       source.blueprintModeStartedAt ?? defaultComposer.blueprintModeStartedAt,
@@ -1623,7 +1687,7 @@ function spriteResultMarkdown(result: {
     videoLines ? `视频：\n\n${videoLines}` : '',
     metadataLines ? `元数据：\n\n${metadataLines}` : '',
   ].filter(Boolean);
-  return `${routeLine}\n✓ Sprite 动画生成完成\n${metaLine}\n\n提示词：${result.prompt}\n\n${assets.join('\n\n')}`;
+  return `${routeLine}\n✓ Sprite raw sheet 生成完成\n${metaLine}\n后续可用于规范化、切帧、manifest 和质检。\n\n提示词：${result.prompt}\n\n${assets.join('\n\n')}`;
 }
 
 function modelAssetHref(src: string): string {
@@ -1702,6 +1766,49 @@ function threeDResultMarkdown(result: {
       }`
     : '';
   return `${routeLine}\n✓ 3D 模型生成完成${riggingLine}\n\n提示词：${result.prompt}${downloadBlock}\n\n${assetLines}`;
+}
+
+function worldModelResultMarkdown(result: {
+  providerLabel: string;
+  model: string;
+  prompt: string;
+  specBody: string;
+  assets: string[];
+}): string {
+  const routeLine = `⚙ 路由：${result.providerLabel} · 模型：${result.model}`;
+  const assetLines = result.assets
+    .map((src, index) => `[打开世界资源 ${index + 1}](${modelAssetHref(src)})`)
+    .join('\n\n');
+  const assetsBlock = assetLines ? `\n\n${assetLines}` : '';
+  return `${routeLine}\n✓ 世界模型生成完成\n\n提示词：${result.prompt}${assetsBlock}\n\n\`\`\`worldmodel\n${result.specBody}\n\`\`\``;
+}
+
+function friendlyWorldModelGenerationError(message: string): string {
+  if (message === 'WORLD_MODEL_GENERATION_DISABLED') {
+    return '世界模型功能已关闭。请在 设置 > 世界模型 中打开“启用世界模型”开关。';
+  }
+  if (message === 'NO_READY_WORLD_MODEL_PROVIDER') {
+    return '尚未配置可用的世界模型 Provider。请在 设置 > 世界模型 中选择渠道，并填写对应的 API Key / Base URL。';
+  }
+  if (message.startsWith('WORLD_MODEL_PROVIDER_NOT_READY:')) {
+    const providerId = message.slice('WORLD_MODEL_PROVIDER_NOT_READY:'.length);
+    const settings = loadWorldModelGenerationSettings();
+    const label = isWorldModelProviderId(providerId, settings)
+      ? worldModelProviderById(providerId, settings).label
+      : providerId;
+    return `世界模型 Provider「${label}」尚未配置完整（缺少 API Key 或 Base URL，或该渠道暂无公开 API）。请在 设置 > 世界模型 中补全后重试。`;
+  }
+  return message;
+}
+
+function isWorldModelProviderId(
+  value: unknown,
+  settings = loadWorldModelGenerationSettings(),
+): value is WorldModelProviderId {
+  return (
+    typeof value === 'string' &&
+    worldModelProviders(settings).some((provider) => provider.id === value)
+  );
 }
 
 function threeDAssetFileName(src: string, index: number): string {
@@ -5296,6 +5403,10 @@ export const useStore = create<StoreState>((set, get) => ({
     })();
   },
 
+  generateWorldPrompt: (text) => {
+    startWorldModelGenerationTurn(text);
+  },
+
   generateUiPrompt: (text) => {
     const prompt = stripUiModeCommand(text);
     if (!prompt) return;
@@ -5313,6 +5424,12 @@ export const useStore = create<StoreState>((set, get) => ({
     void get().sendPrompt(
       `${blueprintModePromptSystem(modeArgs)}\n\n用户需求：\n${prompt}`,
     );
+  },
+
+  generateMetaHumanPrompt: (text) => {
+    const prompt = stripMetaHumanModeCommand(text);
+    if (!prompt) return;
+    void get().sendPrompt(`${metaHumanModePromptSystem()}\n\n用户需求：\n${prompt}`);
   },
 
   searchMeshLibraryPrompt: (text) => {
@@ -5513,6 +5630,10 @@ export const useStore = create<StoreState>((set, get) => ({
     // conversation. The graph stays a single node.
     const directRoute = resolveDirectGatewayRoute(gatewaySelection);
     const inTauri = isTauri();
+    const projectEngineGuidance = projectEngineGuidanceForState(
+      state,
+      aiEditingSession,
+    );
     const projectMcpGuidance = projectMcpGuidanceForState(state, aiEditingSession);
     const preferCliForProjectMcp = inTauri && !!projectMcpGuidance;
     const useApi = !!directRoute && !preferCliForProjectMcp;
@@ -5777,16 +5898,6 @@ ${previousReply.slice(0, 4000)}
     ): Promise<string> => {
       await changesBaselineReady;
       const policy = timeoutPolicyForSelection(cli.selection, prompt);
-      // Session cache TTL (minutes) is a per-session keep-alive knob chosen in
-      // the composer before the conversation starts. It maps onto the CLI
-      // idle/keep-alive timeout: a larger TTL keeps the session context alive
-      // longer between turns. Never drop below the model-tier-derived minimum.
-      const cacheTtlSeconds =
-        normalizeCacheTtlMinutes(state.composer.cacheTtlMinutes) * 60;
-      const idleTimeoutSeconds = Math.max(
-        policy.idleTimeoutSeconds,
-        cacheTtlSeconds,
-      );
       const startedAt = Date.now();
       let firstProgressAt: number | undefined;
       const runId = opts.runId ?? makeCliRunId();
@@ -5799,7 +5910,7 @@ ${previousReply.slice(0, 4000)}
         const text = await aiEditViaCli(prompt, cli.adapter, {
           ...opts,
           timeoutSeconds: policy.timeoutSeconds,
-          idleTimeoutSeconds,
+          idleTimeoutSeconds: policy.idleTimeoutSeconds,
           runId,
           onUsage: (raw) => {
             realUsage = mergeUsageReports(realUsage, usageReportFromCliUsage(raw));
@@ -6066,6 +6177,7 @@ ${previousReply.slice(0, 4000)}
       personalBlock +
       gameExpertBlock +
       assetCapabilityBlock +
+      projectEngineGuidance +
       projectMcpGuidance;
     const clarifyingSystem =
       `${unifiedBase}\n\n${INTERACTION_PROTOCOL}\n` +
@@ -6295,6 +6407,7 @@ ${previousReply.slice(0, 4000)}
           personalBlock,
           gameExpertBlock,
           simpleAssetCapabilityBlock,
+          projectEngineGuidance,
           useCli ? projectMcpGuidance : '',
         ].join('');
         // Multi-turn context: the gateway/CLI takes a single string, so fold the
@@ -8149,13 +8262,15 @@ const SPEECH_PROMPT_SYSTEM = `你是专业的"配音文案撰稿人"。你的输
 const SPRITE_PROMPT_SYSTEM = `你是专业的"Sprite 动画提示词工程师"。用户会给出一句关于想要生成的 sprite、spritesheet、像素角色、技能特效或动作帧的描述，你要把它扩写成一段高质量、可直接喂给 sprite 动画生成模型的提示词。
 要求：
 - 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
-- 补全主体、视角、动作、风格、帧数意图、循环方式、raw spritesheet 背景、裁切、安全边距、角色一致性和导出用途。
+- 补全主体、视角、动作、风格、帧数意图、循环方式、raw spritesheet 背景、裁切、安全边距、角色一致性、导出用途和验收标准。
 - 优先生成单个主体；除非用户明确要求，不要多角色、复杂背景、文字、UI 或相机移动。
 - 动画需求要说明动作阶段，例如 idle/walk/run/attack/jump/hit/death 或 VFX loop，并强调主体大小、朝向和中心位置稳定。
 - Sprite sheet 要强调 exact grid、solid chroma key background、clean silhouette、consistent proportions、even frame spacing、game-ready sprite sheet。
 - 如果目标是可抠底 Sprite，优先使用纯 #FF00FF raw 背景；不要要求模型直接画透明背景、格线、边框、文字或标签。
 - 同一张 sheet 只包含一个动作；walk/run/attack/death 等不同动作要拆成不同 sheet。
-- 强调所有帧主体尺度一致、锚点稳定、留安全边距、不贴边，方便后处理切帧、对齐、质检。
+- 强调所有帧主体尺度一致、根锚稳定、留安全边距、不贴边，方便后处理切帧、对齐、规范化和质检。
+- 明确要求真实动画姿态变化，例如四肢、躯干、武器或特效形态随帧推进；不要用整体平移、缩放、旋转或重复姿势假装运动。
+- 把输出定位为 raw sheet：原图要保留，并能用于后续生成 normalized sheet、frames、GIF preview、manifest metadata 和 QC report；不要让模型把这些说明画进图片里。
 - 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
 - 不要要求模仿在世真人、受版权角色或受保护 IP；用可授权的风格描述替代。
 - 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。`;
@@ -8168,8 +8283,9 @@ function spritePromptSystem(): string {
 当前 Sprite Forge 兼容约束：
 - 默认 sheet 网格：${grid.rows} 行 x ${grid.columns} 列，共 ${grid.cells} 帧。
 - 默认单帧尺寸：${settings.defaultFrameSize}px；主体 fit scale：${settings.fitScale}。
-- raw sheet 背景：${settings.removeBackground ? settings.chromaKey : 'transparent-or-clean'}；后处理会按该背景抠底。
-- 帧锚点：${settings.frameAnchor}；主体保留模式：${settings.componentMode}；${settings.rejectEdgeTouch ? '拒绝贴边帧' : '允许贴边帧'}。`;
+- raw sheet 背景：${settings.removeBackground ? settings.chromaKey : 'transparent-or-clean'}；后处理应能按该背景抠底，并保留 raw 与 normalized 两类资产。
+- 帧锚点：${settings.frameAnchor}；主体保留模式：${settings.componentMode}；${settings.rejectEdgeTouch ? '拒绝贴边帧' : '允许贴边帧'}。
+- 交付目标：raw sheet 能被确定性流程切帧、对齐、打包、生成 manifest 和验收报告。`;
 }
 
 // ComfyUI authoring instruction. Unlike the image/music/3D prompt refiners
@@ -8234,7 +8350,40 @@ function blueprintModePromptSystem(modeArgs: string | null | undefined): string 
 - 回答使用简体中文，结论先行。${argsLine}`;
 }
 
-type GenerationPromptMode = 'image' | 'music' | 'threeD' | 'video' | 'sprite' | 'speech';
+/** Strip the /metahuman-mode-start|/metahuman-mode-end command prefix from a chat line. */
+function stripMetaHumanModeCommand(text: string): string {
+  return text
+    .trim()
+    .replace(/^\/metahuman-mode-(?:start|end)\s*/iu, '')
+    .trim();
+}
+
+function metaHumanModePromptSystem(): string {
+  return `你现在处于 MetaHuman MVP 模式。目标是把用户描述逐步推进为可在本地 Unreal Engine 中执行的 MetaHuman 角色生成/拟合流程。
+核心流程：
+1. 需求澄清与合规改写：把用户想要的脸型、气质、年龄、发型、肤色、体型、服装、相似度参考等转成可执行角色 brief。涉及真实名人时，避免承诺生成可识别复制品，转成面部特征和风格参考。
+2. 参考图方案：生成正脸、3/4 侧脸、侧脸、多角度一致性提示词和负面提示词；图片只是参考，不要声称 MetaHuman 可直接吃普通单图。
+3. 3D 人脸 mesh/参数拟合方案：选择单图/多图重建、FLAME/3DMM/landmark 拟合、或 3D 生成模型输出 OBJ/FBX；明确中性表情、睁眼、五官清晰、尺度和拓扑/贴图质量要求。
+4. 本地 UE MetaHuman 步骤：导入 mesh，创建 MetaHuman Identity，Neutral Pose tracking，Identity Solve，必要时提交 Epic backend conform，Conform from Identity，生成 MetaHuman Character，配置材质、发型、体型、服装和 LOD。
+5. 预览与验收：输出截图/短视频/低清预览，记录待修正项，再进入下一轮调整。
+交互规则：
+- 每轮只推进一个阶段或一个明确子步骤；不要一次性跳完整条管线。
+- 每个阶段结束时必须让用户确认、选择或输入调整意见，才能进入下一阶段。
+- 需要用户选择时，只输出完整的 <<FUC_ASK>> 交互协议块并立即结束本回合；不要在正文里写“请回复 1/2/3”。
+- 需要用户自由修改时，用 input 类型交互块；需要在几个阶段动作间选择时，用 select；需要确认进入下一步时，用 confirm。
+- 如果本轮已经收到用户的选择或调整内容，就直接据此更新方案并给出下一步交互块。
+- 不要生成 OpenWorkflows IRGraph，不要输出 workflow 蓝图 JSON，不要把需求改写成普通素材生成任务。
+- 回答使用简体中文，结论先行。`;
+}
+
+type GenerationPromptMode =
+  | 'image'
+  | 'music'
+  | 'threeD'
+  | 'video'
+  | 'sprite'
+  | 'speech'
+  | 'world';
 
 function generationModeStartedAt(
   composer: ComposerSettings,
@@ -8251,7 +8400,9 @@ function generationModeStartedAt(
             ? composer.videoModeStartedAt
             : mode === 'speech'
               ? composer.speechModeStartedAt
-              : composer.spriteModeStartedAt;
+              : mode === 'world'
+                ? composer.worldModeStartedAt
+                : composer.spriteModeStartedAt;
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
@@ -8267,8 +8418,10 @@ function generationModeActive(
         ? composer.threeDMode
         : mode === 'video'
           ? composer.videoMode
-          : mode === 'speech'
-            ? composer.speechMode
+        : mode === 'speech'
+          ? composer.speechMode
+          : mode === 'world'
+            ? composer.worldMode
             : composer.spriteMode;
 }
 
@@ -8278,6 +8431,7 @@ function generationModeEnteredText(mode: GenerationPromptMode, text: string): bo
   if (mode === 'video') return /已进入视频模式|video mode on/i.test(text);
   if (mode === 'speech') return /已进入语音模式|speech mode on/i.test(text);
   if (mode === 'sprite') return /已进入\s*Sprite\s*模式|sprite mode on/i.test(text);
+  if (mode === 'world') return /已进入世界模型模式|world-model mode on/i.test(text);
   return /已进入\s*Mesh\s*模式|mesh mode on/i.test(text);
 }
 
@@ -8287,6 +8441,7 @@ function generationModeExitedText(mode: GenerationPromptMode, text: string): boo
   if (mode === 'video') return /已退出视频模式|video mode off/i.test(text);
   if (mode === 'speech') return /已退出语音模式|speech mode off/i.test(text);
   if (mode === 'sprite') return /已退出\s*Sprite\s*模式|sprite mode off/i.test(text);
+  if (mode === 'world') return /已退出世界模型模式|world-model mode off/i.test(text);
   return /已退出\s*Mesh\s*模式|mesh mode off/i.test(text);
 }
 
@@ -8315,6 +8470,7 @@ function stripGenerationCommand(
   if (mode === 'video') return stripVideoCommand(text);
   if (mode === 'speech') return stripSpeechCommand(text);
   if (mode === 'sprite') return stripSpriteCommand(text);
+  if (mode === 'world') return stripWorldModelCommand(text);
   return stripThreeDCommand(text);
 }
 
@@ -9542,6 +9698,200 @@ function startThreeDGenerationTurn(
       if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
       setAssistant(
         `${elapsed()} · 失败\n✗ 3D 模型生成失败: ${msg}\n\n${threeDFailureHint(msg)}`,
+        true,
+      );
+      syncAndPersistSessionRunStatus(sessionKey, 'error');
+    } finally {
+      removeAiEditChannel(ch);
+    }
+  })();
+}
+
+function startWorldModelGenerationTurn(
+  text: string,
+  options: { providerId?: WorldModelProviderId; model?: string } = {},
+): void {
+  const prompt = stripWorldModelCommand(text);
+  if (!prompt) return;
+  const state = useStore.getState();
+  if (isWorkflowReadOnly(state)) return;
+  const generationPrompt = modeContextPrompt(state, 'world', prompt);
+  const sessionKey = activeWorkflowSessionKey(state);
+  const settings = loadWorldModelGenerationSettings();
+  if (!settings.enabled) {
+    useStore
+      .getState()
+      .appendChatNote(
+        `✗ ${friendlyWorldModelGenerationError('WORLD_MODEL_GENERATION_DISABLED')}`,
+        'system',
+      );
+    return;
+  }
+  const providerId = options.providerId ?? preferredReadyWorldModelProviderId(settings);
+  if (!providerId) {
+    useStore
+      .getState()
+      .appendChatNote(
+        `✗ ${friendlyWorldModelGenerationError('NO_READY_WORLD_MODEL_PROVIDER')}`,
+        'system',
+      );
+    return;
+  }
+  if (!worldModelProviderReady(providerId, settings)) {
+    useStore
+      .getState()
+      .appendChatNote(
+        `✗ ${friendlyWorldModelGenerationError(`WORLD_MODEL_PROVIDER_NOT_READY:${providerId}`)}`,
+        'system',
+      );
+    return;
+  }
+
+  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
+
+  const now = Date.now();
+  const provider = worldModelProviderById(providerId, settings);
+  const providerLabel = provider.label;
+  const model = options.model?.trim() || worldModelProviderModel(providerId, settings);
+  const userMsg: Message = {
+    id: shortId('m'),
+    role: 'user',
+    text,
+    createdAt: now,
+  };
+  linkMessageManagedAssets(userMsg, sessionKey);
+  const assistantId = shortId('m');
+  const assistantMsg: Message = {
+    id: assistantId,
+    role: 'assistant',
+    text: `⚙ 世界模型：${providerLabel}${model ? ` · 模型：${model}` : ''}\n正在调用世界模型 API…`,
+    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
+    createdAt: now + 1,
+  };
+  const promptUpdate = applyPromptTitle(state, prompt, now);
+  const activeSession = sessionForKey(state, sessionKey);
+  const simpleMode = promptUpdate.workflow.meta?.simple === true;
+  const baseMessages = state.messages;
+  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
+  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
+  const ch: AiEditChannel = {
+    key: chatTurnKey(chSessionKey, userMsg.id),
+    sessionKey: chSessionKey,
+    workspaceId: sessionKey.workspaceId,
+    sessionId: sessionKey.sessionId,
+    workspaceRootPath,
+    workflow: promptUpdate.workflow,
+    messages: [...baseMessages, userMsg, assistantMsg],
+    cliRunIds: new Set<string>(),
+    abortController: new AbortController(),
+    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
+    chat: true,
+    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
+  };
+
+  const setAssistant = (textValue: string, persist: boolean) => {
+    if (!aiEditRegistered(ch)) return;
+    ch.messages = ch.messages.map((message) =>
+      message.id === assistantId
+        ? {
+            ...message,
+            text: textValue,
+            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
+          }
+        : message,
+    );
+    aiEditCommitMessages(ch, persist);
+  };
+
+  addAiEditChannel(ch);
+  if (aiEditViewActive(ch)) {
+    useStore.setState({
+      messages: ch.messages,
+      sessions: promptUpdate.sessions,
+      sessionTree: promptUpdate.sessionTree,
+      workflow: ch.workflow,
+    });
+  }
+  updateAiEditSessionSummary(ch);
+  if (ch.workspaceId && ch.sessionId) {
+    void historyStore
+      .updateSession(ch.workspaceId, ch.sessionId, {
+        messages: ch.messages,
+        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
+        meta: { runStatus: 'running' },
+      })
+      .catch(() => {});
+  }
+  syncAndPersistSessionRunStatus(sessionKey, 'running');
+
+  void (async () => {
+    const startedAt = Date.now();
+    const elapsed = () =>
+      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
+        Date.now() - startedAt,
+      )}`;
+    let pendingAssetId: string | null = null;
+    try {
+      pendingAssetId = registerPendingGeneratedAsset({
+        kind: provider.interactivity === 'video-stream' ? 'video' : 'mesh',
+        origin: provider.local ? 'local' : 'remote',
+        provider: providerLabel,
+        model,
+        prompt: generationPrompt,
+        sessionId: ch.sessionId,
+        workspaceId: ch.workspaceId,
+        messageId: assistantId,
+        titlePrefix: 'world-model',
+        meta: { interactivity: provider.interactivity },
+      });
+      setAssistant(
+        `${elapsed()}\n正在调用${
+          provider.local ? '本地世界模型服务' : '世界模型 API'
+        }…\n\n世界描述：${generationPrompt}`,
+        false,
+      );
+      const result = await generateWorldModel(
+        {
+          prompt: generationPrompt,
+          providerId: options.providerId,
+          model: options.model,
+          signal: ch.abortController.signal,
+        },
+        settings,
+      );
+      const firstAsset = result.assets[0];
+      if (pendingAssetId) {
+        if (firstAsset) {
+          markAssetDone(pendingAssetId, {
+            remoteUrl: firstAsset,
+            title: 'world-model',
+            meta: { interactivity: provider.interactivity },
+          });
+        } else {
+          markAssetFailed(pendingAssetId, 'No generated world asset output.');
+        }
+        pendingAssetId = null;
+      }
+      setAssistant(
+        `${elapsed()}\n${worldModelResultMarkdown({
+          providerLabel: result.providerLabel,
+          model: result.model,
+          prompt: result.prompt,
+          specBody: serializeWorldModelSpec(result.spec),
+          assets: result.assets,
+        })}`,
+        true,
+      );
+      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
+      syncAndPersistSessionRunStatus(sessionKey, 'success');
+    } catch (err) {
+      if (!aiEditRegistered(ch)) return;
+      if (ch.abortController.signal.aborted) return;
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const msg = friendlyWorldModelGenerationError(rawMsg);
+      if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
+      setAssistant(
+        `${elapsed()} · 失败\n✗ 世界模型生成失败: ${msg}\n\n请在设置 > 世界模型中配置可用 Provider；World Labs Marble 需要 API Key，返回的是 Marble 页面/SPZ 资源，当前不会被普通 GLB 查看器硬预览。`,
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');
@@ -11733,14 +12083,17 @@ function buildGuiCallbacks(
 function buildGuiRunContext(ch: RunChannel, workflow: IRGraph): RuntimeRunContext {
   const state = useStore.getState();
   const { personalInstructions, personalInstructionsByModel } = state;
+  const sessionKey = {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+  };
   return {
     selection: runGlobalGatewaySelection(ch, workflow),
     personalInstructions,
     personalInstructionsByModel,
-    globalInstructions: projectMcpGuidanceForState(state, {
-      workspaceId: ch.workspaceId,
-      sessionId: ch.sessionId,
-    }),
+    globalInstructions:
+      projectEngineGuidanceForState(state, sessionKey) +
+      projectMcpGuidanceForState(state, sessionKey),
     cwd: ch.config.cwd,
     extraWorkspacePaths: ch.config.extraWorkspacePaths,
     permission: ch.config.permission,

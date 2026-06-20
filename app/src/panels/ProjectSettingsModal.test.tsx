@@ -275,7 +275,6 @@ describe('ProjectSettingsModal game project tabs', () => {
         'UI 渠道',
         '绑定渠道',
         '抓帧/性能',
-        '游戏专家',
         '蓝图',
         '命令',
         '权限/自动化',
@@ -574,6 +573,7 @@ describe('ProjectSettingsModal game project tabs', () => {
       );
       expect(commandNames).toEqual([
         '/game',
+        '/image-to-game',
         '/mesh-mode-start',
         '/mesh-mode-end',
         '/mesh-search',
@@ -582,6 +582,8 @@ describe('ProjectSettingsModal game project tabs', () => {
         '/sprite-mode-end',
         '/blueprint-mode-start',
         '/blueprint-mode-end',
+        '/metahuman-mode-start',
+        '/metahuman-mode-end',
         '/ui-mode-start',
         '/ui-mode-end',
       ]);
@@ -614,9 +616,10 @@ describe('ProjectSettingsModal game project tabs', () => {
       expect(view.container.textContent).toContain('/sprite-mode-start');
       expect(view.container.textContent).toContain('设计流程');
       expect(view.container.textContent).toContain('复用生图路由');
-      expect(view.container.textContent).toContain('套 Sprite 协议');
-      expect(view.container.textContent).toContain('本地后处理');
-      expect(view.container.textContent).toContain('质检并导出');
+      expect(view.container.textContent).toContain('套 Sprite 合约');
+      expect(view.container.textContent).toContain('规范化准备');
+      expect(view.container.textContent).toContain('验收目标');
+      expect(view.container.textContent).toContain('raw sheet 规格');
       expect(view.container.textContent).toContain('Sheet 网格');
       expect(view.container.textContent).not.toContain('默认 Sprite 渠道');
       expect(view.container.textContent).not.toContain('商用渠道');
@@ -819,7 +822,7 @@ describe('ProjectSettingsModal game project tabs', () => {
       expect(tabText).toContain('在线模型库');
       expect(tabText).toContain('绑定渠道');
       expect(tabText).toContain('抓帧/性能');
-      expect(tabText).toContain('游戏专家');
+      expect(tabText).not.toContain('游戏专家');
       expect(tabText).toContain('命令');
       expect(tabText).not.toContain('蓝图');
       expect(view.container.textContent).toContain('游戏项目：开启');
@@ -857,7 +860,7 @@ describe('ProjectSettingsModal game project tabs', () => {
       expect(tabText).toContain('在线模型库');
       expect(tabText).toContain('绑定渠道');
       expect(tabText).toContain('抓帧/性能');
-      expect(tabText).toContain('游戏专家');
+      expect(tabText).not.toContain('游戏专家');
       expect(tabText).toContain('命令');
       expect(tabText).not.toContain('蓝图');
     } finally {

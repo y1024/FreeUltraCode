@@ -38,6 +38,9 @@ const MAX_SLASH_ENTRIES: usize = 800;
 const MAX_COMMAND_SCAN_DEPTH: usize = 4;
 const MAX_SKILL_SCAN_DEPTH: usize = 8;
 const MAX_SKILL_INSTALL_BYTES: u64 = 512 * 1024;
+const MAX_SKILL_ZIP_INSTALL_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_SKILL_ZIP_EXTRACTED_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_SKILL_ZIP_FILES: usize = 200;
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
@@ -2114,6 +2117,15 @@ fn validate_skill_install_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_skill_zip_install_url(url: &str) -> Result<(), String> {
+    let trimmed = url.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("https://") {
+        return Err("只支持 HTTPS 下载地址。".to_string());
+    }
+    Ok(())
+}
+
 fn download_skill_text(url: &str) -> Result<String, String> {
     validate_skill_install_url(url)?;
     let response = ureq::get(url)
@@ -2144,6 +2156,134 @@ fn download_skill_text(url: &str) -> Result<String, String> {
     Ok(text)
 }
 
+fn download_skill_zip(url: &str) -> Result<Vec<u8>, String> {
+    validate_skill_zip_install_url(url)?;
+    let response = ureq::get(url)
+        .set("User-Agent", "FreeUltraCode")
+        .set("Accept", "application/zip,application/octet-stream,*/*;q=0.8")
+        .call()
+        .map_err(|e| format!("下载失败: {e}"))?;
+    if let Some(length) = response
+        .header("content-length")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        if length > MAX_SKILL_ZIP_INSTALL_BYTES {
+            return Err("Skill 压缩包过大，已拒绝安装。".to_string());
+        }
+    }
+
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(MAX_SKILL_ZIP_INSTALL_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("读取下载内容失败: {e}"))?;
+    if bytes.len() as u64 > MAX_SKILL_ZIP_INSTALL_BYTES {
+        return Err("Skill 压缩包过大，已拒绝安装。".to_string());
+    }
+    if bytes.is_empty() {
+        return Err("下载内容为空。".to_string());
+    }
+    Ok(bytes)
+}
+
+fn skill_zip_root_and_frontmatter(bytes: &[u8], fallback_name: &str) -> Result<(PathBuf, String), String> {
+    let reader = std::io::Cursor::new(bytes);
+    let mut archive =
+        zip::ZipArchive::new(reader).map_err(|e| format!("打开 Skill 压缩包失败: {e}"))?;
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("读取 Skill 压缩包失败: {e}"))?;
+        let Some(path) = file.enclosed_name() else {
+            continue;
+        };
+        let is_skill_file = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.eq_ignore_ascii_case("SKILL.md"))
+            .unwrap_or(false);
+        if !is_skill_file {
+            continue;
+        }
+        let mut text = String::new();
+        file.by_ref()
+            .take(MAX_SKILL_INSTALL_BYTES + 1)
+            .read_to_string(&mut text)
+            .map_err(|e| format!("读取 SKILL.md 失败: {e}"))?;
+        if text.len() as u64 > MAX_SKILL_INSTALL_BYTES {
+            return Err("SKILL.md 过大，已拒绝安装。".to_string());
+        }
+        let (frontmatter_name, _description) = parse_skill_frontmatter(&text, fallback_name);
+        return Ok((
+            path.parent().map(Path::to_path_buf).unwrap_or_default(),
+            frontmatter_name,
+        ));
+    }
+
+    Err("Skill 压缩包缺少 SKILL.md。".to_string())
+}
+
+fn extract_skill_zip(bytes: &[u8], dst: &Path, package_root: &Path) -> Result<(), String> {
+    let reader = std::io::Cursor::new(bytes);
+    let mut archive =
+        zip::ZipArchive::new(reader).map_err(|e| format!("打开 Skill 压缩包失败: {e}"))?;
+    let mut copied = 0usize;
+    let mut extracted_bytes = 0u64;
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("读取 Skill 压缩包失败: {e}"))?;
+        let Some(path) = file.enclosed_name() else {
+            continue;
+        };
+        let rel = if package_root.as_os_str().is_empty() {
+            path.as_path()
+        } else {
+            match path.strip_prefix(package_root) {
+                Ok(rel) => rel,
+                Err(_) => continue,
+            }
+        };
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        if copied >= MAX_SKILL_ZIP_FILES {
+            return Err("Skill 压缩包文件数量过多，已拒绝安装。".to_string());
+        }
+        extracted_bytes = extracted_bytes.saturating_add(file.size());
+        if extracted_bytes > MAX_SKILL_ZIP_EXTRACTED_BYTES {
+            return Err("Skill 压缩包解压后过大，已拒绝安装。".to_string());
+        }
+
+        let target = dst.join(rel);
+        if file.is_dir() {
+            std::fs::create_dir_all(&target)
+                .map_err(|e| format!("创建目录失败 {}: {e}", target.to_string_lossy()))?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建目录失败 {}: {e}", parent.to_string_lossy()))?;
+        }
+        let mut out = std::fs::File::create(&target)
+            .map_err(|e| format!("创建文件失败 {}: {e}", target.to_string_lossy()))?;
+        std::io::copy(&mut file, &mut out)
+            .map_err(|e| format!("写入文件失败 {}: {e}", target.to_string_lossy()))?;
+        copied += 1;
+    }
+
+    if copied == 0 {
+        return Err("Skill 压缩包没有可安装文件。".to_string());
+    }
+    if !dst.join("SKILL.md").is_file() {
+        return Err("Skill 压缩包安装后缺少 SKILL.md。".to_string());
+    }
+    Ok(())
+}
+
 fn install_skill_from_url_blocking(
     url: String,
     name: String,
@@ -2164,6 +2304,87 @@ fn install_skill_from_url_blocking(
         project_root,
         Some(url),
     )
+}
+
+fn install_skill_from_zip_url_blocking(
+    url: String,
+    name: String,
+    slug: String,
+    target_id: String,
+    overwrite: bool,
+    source_url: Option<String>,
+    project_root: Option<String>,
+) -> Result<InstalledSkill, String> {
+    let bytes = download_skill_zip(&url)?;
+    let (package_root, frontmatter_name) = skill_zip_root_and_frontmatter(&bytes, &name)?;
+    let project_root = match project_root
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        Some(raw) => Some(project_scan_root(raw)?),
+        None => None,
+    };
+    let (target_id, _label, root, _is_default) =
+        skill_install_root(&target_id, project_root.as_deref())?;
+    let installed_name = if name.trim().is_empty() {
+        frontmatter_name
+    } else {
+        name.trim().to_string()
+    };
+    let slug_source = if slug.trim().is_empty() {
+        installed_name.as_str()
+    } else {
+        slug.as_str()
+    };
+    let slug = sanitize_skill_install_slug(slug_source);
+    std::fs::create_dir_all(&root).map_err(|e| format!("创建技能目录失败: {e}"))?;
+    let root = std::fs::canonicalize(&root).map_err(|e| format!("读取技能目录失败: {e}"))?;
+    let target_dir = root.join(&slug);
+    let skill_file = target_dir.join("SKILL.md");
+    let existed = skill_file.is_file();
+    if existed && !overwrite {
+        return Err("目标 skill 已存在。".to_string());
+    }
+
+    if target_dir.exists() && overwrite {
+        let canonical_existing = std::fs::canonicalize(&target_dir)
+            .map_err(|e| format!("读取旧 Skill 目录失败: {e}"))?;
+        if !canonical_existing.starts_with(&root) {
+            return Err("安装路径超出允许目录。".to_string());
+        }
+        std::fs::remove_dir_all(&target_dir)
+            .map_err(|e| format!("清理旧 Skill 目录失败: {e}"))?;
+    }
+    std::fs::create_dir_all(&target_dir).map_err(|e| format!("创建安装目录失败: {e}"))?;
+    let canonical_target =
+        std::fs::canonicalize(&target_dir).map_err(|e| format!("读取安装目录失败: {e}"))?;
+    if !canonical_target.starts_with(&root) {
+        return Err("安装路径超出允许目录。".to_string());
+    }
+
+    extract_skill_zip(&bytes, &target_dir, &package_root)?;
+    let source_meta = serde_json::json!({
+        "name": installed_name.clone(),
+        "slug": slug.clone(),
+        "downloadUrl": url,
+        "sourceUrl": source_url.clone(),
+        "installedAtMs": now_ms(),
+        "installedBy": "FreeUltraCode plugin store"
+    });
+    let _ = std::fs::write(
+        target_dir.join(".freeultracode-source.json"),
+        serde_json::to_string_pretty(&source_meta).unwrap_or_else(|_| "{}".to_string()),
+    );
+
+    Ok(InstalledSkill {
+        name: installed_name,
+        slug,
+        target_id,
+        path: display_preview_path(&target_dir),
+        skill_file: display_preview_path(&skill_file),
+        source_url,
+        overwritten: existed,
+    })
 }
 
 fn install_skill_from_text_blocking(
@@ -2258,6 +2479,34 @@ async fn install_skill_from_url(
 ) -> Result<InstalledSkill, String> {
     let installed = tauri::async_runtime::spawn_blocking(move || {
         install_skill_from_url_blocking(
+            url,
+            name,
+            slug,
+            target_id,
+            overwrite.unwrap_or(false),
+            source_url,
+            project_root,
+        )
+    })
+    .await
+    .map_err(|e| format!("安装任务失败: {e}"))??;
+    let _ = refresh_slash_catalog_async(app).await;
+    Ok(installed)
+}
+
+#[tauri::command]
+async fn install_skill_from_zip_url(
+    app: AppHandle,
+    url: String,
+    name: String,
+    slug: String,
+    target_id: String,
+    overwrite: Option<bool>,
+    source_url: Option<String>,
+    project_root: Option<String>,
+) -> Result<InstalledSkill, String> {
+    let installed = tauri::async_runtime::spawn_blocking(move || {
+        install_skill_from_zip_url_blocking(
             url,
             name,
             slug,
@@ -11862,7 +12111,9 @@ fn extract_json(text: &str) -> String {
 /// Default hard timeout for a single CLI invocation before it is killed.
 const DEFAULT_AI_CLI_TIMEOUT_SECS: u64 = 1800;
 /// Default "no observable progress" timeout for a single CLI invocation.
-const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 300;
+/// 0 disables idle detection; long-running tools often stay quiet while waiting
+/// for external work such as CI, package builds, or downloads.
+const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 0;
 const CLI_ERROR_CONTEXT_LIMIT: usize = 1200;
 /// Idle gap (no stdout activity) after which a "still running" heartbeat line is
 /// emitted to the run log, so a long node never looks completely frozen even
@@ -12534,14 +12785,17 @@ fn configured_ai_cli_idle_timeout_secs() -> u64 {
 }
 
 fn ai_cli_idle_timeout_secs(override_secs: Option<u64>) -> u64 {
-    let configured = configured_ai_cli_idle_timeout_secs();
-    if configured == 0 {
-        return 0;
+    if let Ok(raw) = std::env::var("FREEULTRACODE_AI_CLI_IDLE_TIMEOUT_SECS") {
+        if let Ok(secs) = raw.trim().parse::<u64>() {
+            if secs == 0 || secs >= 30 {
+                return secs;
+            }
+        }
     }
     match override_secs.filter(|secs| *secs == 0 || *secs >= 30) {
         Some(0) => 0,
-        Some(dynamic) => configured.max(dynamic),
-        None => configured,
+        Some(dynamic) => dynamic,
+        None => configured_ai_cli_idle_timeout_secs(),
     }
 }
 
@@ -15667,6 +15921,7 @@ pub fn run() {
             refresh_slash_catalog,
             skill_install_targets,
             install_skill_from_url,
+            install_skill_from_zip_url,
             install_skill_from_text,
             uninstall_skill,
             scan_model_clis,

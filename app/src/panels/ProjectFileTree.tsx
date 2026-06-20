@@ -29,6 +29,10 @@ import {
 } from 'lucide-react';
 import FilePreviewDrawer from '@/components/ai/FilePreviewDrawer';
 import type { FileRef } from '@/components/ai/lib/filePath';
+import GameTeamPanel, {
+  OPEN_GAME_TEAM_DETAILS_EVENT,
+  type OpenGameTeamDetailsEventDetail,
+} from '@/panels/GameTeamPanel';
 import { t, type Locale } from '@/lib/i18n';
 import {
   buildSessionFileTree,
@@ -803,6 +807,9 @@ export default function ProjectFileTree() {
   const [cache, setCache] = useState<WorkspaceTreeCache>({});
   const cacheRef = useRef(cache);
   const [previewRef, setPreviewRef] = useState<FileRef | null>(null);
+  const [teamDetailsPreview, setTeamDetailsPreview] = useState<{
+    nodeId?: string;
+  } | null>(null);
   // 预览抽屉解析相对路径时使用的工作目录。「文件」标签用当前选中的根目录，
   // 「会话文件」标签则用会话自己的工作目录（见 openSessionFile），二者解耦，
   // 避免会话文件因为文件夹下拉条被切到子目录而解析到错误的绝对路径。
@@ -811,10 +818,10 @@ export default function ProjectFileTree() {
   // 只展示当前会话里 AI 修改过的文件；新增/修改/删除来自已落盘缓存。
   const [panelTab, setPanelTab] = useState<ProjectPanelTab>(() => {
     if (typeof window === 'undefined') return 'files';
-    return window.localStorage.getItem('freeultracode.projectRightPanelTab.v1') ===
-      'session'
-      ? 'session'
-      : 'files';
+    const stored = window.localStorage.getItem(
+      'freeultracode.projectRightPanelTab.v1',
+    );
+    return stored === 'session' ? stored : 'files';
   });
   const [viewMode, setViewMode] = useState<ProjectTreeViewMode>(() => {
     if (typeof window === 'undefined') return 'tree';
@@ -1182,10 +1189,22 @@ export default function ProjectFileTree() {
   // }, []);
 
   const updatePanelTab = useCallback((nextTab: ProjectPanelTab) => {
+    setTeamDetailsPreview(null);
     setPanelTab(nextTab);
     if (typeof window !== 'undefined') {
       window.localStorage.setItem('freeultracode.projectRightPanelTab.v1', nextTab);
     }
+  }, []);
+
+  useEffect(() => {
+    const openTeamDetails = (event: Event) => {
+      const detail = (event as CustomEvent<OpenGameTeamDetailsEventDetail>).detail;
+      setPreviewRef(null);
+      setTeamDetailsPreview({ nodeId: detail?.nodeId });
+    };
+    window.addEventListener(OPEN_GAME_TEAM_DETAILS_EVENT, openTeamDetails);
+    return () =>
+      window.removeEventListener(OPEN_GAME_TEAM_DETAILS_EVENT, openTeamDetails);
   }, []);
 
   const openSessionFile = useCallback(
@@ -1199,6 +1218,7 @@ export default function ProjectFileTree() {
         sessionChangesRootPath?.trim() ||
         rootFolders[0] ||
         undefined;
+      setTeamDetailsPreview(null);
       setPreviewCwd(sessionCwd || undefined);
       setPreviewRef({ path: entry.path, basename: entry.basename });
     },
@@ -1722,6 +1742,7 @@ export default function ProjectFileTree() {
                     if (isDirectory) {
                       toggleDirectory(entry, { skipLoad: virtualDeleted });
                     } else if (!virtualDeleted && !isDeleted) {
+                      setTeamDetailsPreview(null);
                       setPreviewCwd(selectedRootPath || undefined);
                       setPreviewRef(fileRefFromEntry(entry));
                     }
@@ -1915,6 +1936,7 @@ export default function ProjectFileTree() {
                         skipLoad: virtualDeleted,
                       });
                     } else if (!virtualDeleted && vcsStatus !== 'deleted') {
+                      setTeamDetailsPreview(null);
                       setPreviewCwd(selectedRootPath || undefined);
                       setPreviewRef(fileRefFromEntry(entry));
                     }
@@ -2192,7 +2214,11 @@ export default function ProjectFileTree() {
           </div>
           <div
             className="mt-1 truncate font-mono text-[10px] text-fg-faint"
-            title={panelTab === 'session' ? t(locale, 'sessionFiles.title') : selectedRootPath}
+            title={
+              panelTab === 'session'
+                ? t(locale, 'sessionFiles.title')
+                : selectedRootPath
+            }
           >
             {panelTab === 'session'
               ? sessionFileCountLine(
@@ -2242,7 +2268,12 @@ export default function ProjectFileTree() {
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-auto py-1">
+        <div
+          className={
+            'min-h-0 flex-1 ' +
+            'overflow-auto py-1'
+          }
+        >
           {panelTab === 'session' ? (
             renderSessionFiles()
           ) : !selectedRootPath ? (
@@ -2295,10 +2326,29 @@ export default function ProjectFileTree() {
         />
       )}
 
+      {/* 岗位详情复用普通文件预览抽屉的 fixed 外壳，避免把组织架构节点渲染成
+          “项目文件”面板内部内容。 */}
       <FilePreviewDrawer
-        refData={previewRef}
+        refData={teamDetailsPreview ? null : previewRef}
+        customContent={
+          teamDetailsPreview
+            ? {
+                label: '岗位属性和 Skill',
+                path: '游戏团队 / 岗位描述、人员与 Skill',
+                children: (
+                  <GameTeamPanel
+                    mode="details"
+                    selectedNodeId={teamDetailsPreview.nodeId ?? null}
+                  />
+                ),
+              }
+            : null
+        }
         cwd={previewCwd}
-        onClose={() => setPreviewRef(null)}
+        onClose={() => {
+          setPreviewRef(null);
+          setTeamDetailsPreview(null);
+        }}
       />
     </>
   );

@@ -2157,6 +2157,49 @@ describe('simple-workflow chat mode', () => {
     expect(prompt).toContain('优先使用 Unreal MCP 工具读取编辑器实时状态');
   });
 
+  it('injects the configured project engine into simple chat prompts', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    useStore.setState({
+      activeWorkspaceId: 'ws-unreal',
+      workspaces: [
+        {
+          id: 'ws-unreal',
+          path: 'E:\\uug_mcp\\ue-mcp-for-all-versions\\test_project_ue57\\Unity\\Unreal',
+          name: 'Unreal',
+          updatedAt: Date.now(),
+          sessionCount: 0,
+          metadata: {
+            projectSettings: {
+              schemaVersion: 1,
+              engine: 'unreal',
+            },
+          },
+        },
+      ],
+    });
+    const systems: string[] = [];
+    gatewayMocks.completeGatewayText.mockImplementation(async (request) => {
+      systems.push(String(request.system));
+      return '按 Unreal 项目拆解。';
+    });
+
+    useStore.getState().sendPrompt('对游戏图片进行游戏技术设计分析');
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore.getState().messages.some((m) => m.role === 'assistant'),
+      'project engine simple chat answer',
+    );
+
+    expect(systems[0]).toContain('【项目引擎】');
+    expect(systems[0]).toContain('当前项目引擎：Unreal Engine');
+    expect(systems[0]).toContain('优先按 Unreal Engine 项目实现');
+    expect(systems[0]).toContain('不要改用 Godot');
+    expect(systems[0]).not.toContain('默认以 Godot');
+  });
+
   it('shows the route and strips route/tool logs from the next transcript', async () => {
     resetStore(simpleBlueprint('Simple chat'));
     gatewayMocks.resolveDirectGatewayRoute.mockReturnValue({

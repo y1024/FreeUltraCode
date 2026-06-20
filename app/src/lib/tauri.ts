@@ -645,7 +645,7 @@ export interface CliOpts {
   env?: Record<string, string>;
   /** Per-call hard timeout override, in seconds. Backend keeps the larger of env/default and this value. */
   timeoutSeconds?: number;
-  /** Per-call no-progress timeout override, in seconds. Backend keeps the larger of env/default and this value. */
+  /** Per-call no-progress timeout override, in seconds. 0 disables the idle watchdog. */
   idleTimeoutSeconds?: number;
   /** Stable id used to stream progress and cancel the process from the UI. */
   runId?: string;
@@ -1816,6 +1816,42 @@ export async function installSkillFromUrl(params: {
   }
   const invoke = await getInvoke();
   const installed = await invoke<InstalledSkill>('install_skill_from_url', {
+    url: params.url,
+    name: params.name,
+    slug: params.slug,
+    targetId: params.targetId,
+    overwrite: params.overwrite ?? false,
+    sourceUrl: params.sourceUrl ?? null,
+    projectRoot: params.projectRoot ?? null,
+  });
+  registerAsset({
+    kind: 'skill',
+    source: 'installed',
+    origin: 'local',
+    title: installed.name || installed.slug,
+    status: 'success',
+    localPath: installed.skillFile || installed.path,
+    remoteUrl: installed.sourceUrl ?? params.sourceUrl ?? params.url,
+    meta: { targetId: installed.targetId, slug: installed.slug },
+  });
+  return installed;
+}
+
+/** Download and extract a ZIP skill package into a local skill root. */
+export async function installSkillFromZipUrl(params: {
+  url: string;
+  name: string;
+  slug: string;
+  targetId: string;
+  overwrite?: boolean;
+  sourceUrl?: string | null;
+  projectRoot?: string | null;
+}): Promise<InstalledSkill> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  const installed = await invoke<InstalledSkill>('install_skill_from_zip_url', {
     url: params.url,
     name: params.name,
     slug: params.slug,
